@@ -1,0 +1,35 @@
+[build-system]
+requires = ["uv_build>=0.12.16,<0.13.0"]
+build-backend = "uv_build"
+
+[project]
+name = "factorregression"
+version = "0.1.0"
+description = "Reference MCMC for Bayesian logistic factorization machines"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+  "numpy>=2.0,<3",
+  "scipy>=1.14,<2",
+  "polyagamma>=2.0,<3",
+  "arviz==0.22.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
+
+[project.scripts]
+factorregression = "factorregression.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = ["slow: posterior comparisons using independent quadrature"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E741"]

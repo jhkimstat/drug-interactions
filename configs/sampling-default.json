@@ -1,0 +1,24 @@
+{
+  "model": {
+    "p": 5,
+    "D": 3,
+    "ranks": {"2": 5, "3": 5},
+    "prior": {
+      "a_beta": 3.0, "b_beta": 2.0,
+      "a_v": 4.0, "b_v": 1.0,
+      "a_gamma": 1.0, "b_gamma": 1.0,
+      "a_z": 1.0, "b_z": 1.0
+    }
+  },
+  "sampling": {
+    "chains": 4,
+    "burn_in": 2000,
+    "draws": 2000,
+    "thin": 1,
+    "seed": 20261006,
+    "cache_every": 100,
+    "max_seconds": 2700,
+    "max_draw_bytes": 536870912,
+    "save_omega": false
+  }
+}

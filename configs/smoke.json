@@ -1,0 +1,7 @@
+{
+  "model": {"p": 5, "D": 3, "ranks": {"2": 5, "3": 5}},
+  "sampling": {
+    "chains": 4, "burn_in": 100, "draws": 100, "thin": 1,
+    "seed": 20261006, "cache_every": 10, "max_seconds": 300
+  }
+}
