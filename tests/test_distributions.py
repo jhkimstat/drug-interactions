@@ -91,3 +91,12 @@ def test_invalid_distribution_inputs():
         truncated_gamma(3, -1, 1, rng)
     with pytest.raises(FloatingPointError):
         truncated_exponential(1, 0, rng)
+
+
+def test_rounded_truncation_endpoint_does_not_cause_spurious_failure():
+    class NearOneRNG:
+        def random(self):
+            return np.nextafter(1.0, 0.0)
+
+    value = truncated_gamma(10, 0, 2, NearOneRNG())
+    assert value == 2  # Within one floating-point rounding bin of the open bound.

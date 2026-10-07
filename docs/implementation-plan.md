@@ -1,6 +1,6 @@
 # Bayesian factor regression 구현 계획
 
-작성일: 2026-10-01. 갱신일: 2026-10-06. 상태: **현재 Sampling 범위 P1–P6 기준 구현·검증 완료 — Inference·Scalable SSP 보류, full pilot 미실행**.
+작성일: 2026-10-01. 갱신일: 2026-10-07. 상태: **현재 Sampling 범위 P1–P6 기준 구현·검증 완료 — Inference·Scalable SSP 보류, full pilot 미실행**.
 
 현재 Sampling 범위의 모델 명세와 구현 계약은 개발 착수가 가능한 수준으로 정리되었다. 이 문서에서 모델 명세, 확정된 결정, 변경 가능한 default, 후속 질문, 단계별 완료 조건을 함께 관리한다. 사용자 확정 사항은 §2와 §11에 표시하며, 제안 default를 본 실험 scientific setting의 확정으로 간주하지 않는다. 공통·Normal·Horseshoe·Reference SSP 코드와 검증을 구현했다. 실제 검증 범위는 §10과 docs/validation.md에 기록한다.
 
@@ -45,6 +45,8 @@ Normal baseline의 첨부 노트는 `/Users/jaehoonkim/Library/Mobile Documents/
 
 이를 구체화하는 설계안은 다음과 같다. 노트 표기를 읽기 쉬운 ASCII로 옮기고 shape와 분포 매개변수화를 문서화한다. 표준 수치 라이브러리를 우선 사용하며 역행렬을 직접 계산하지 않는다. 모델 상태, 파생 캐시, 난수 상태, 진단을 구분한다. 수치적 정확성·검증 가능성·재현성은 위 목표를 뒷받침하고, 성능 최적화는 검증된 병목이 있을 때만 수행한다. 범용 sampler 계층, plugin/callback framework, 범용 캐시·설정 엔진을 만들지 않는다.
 
+**사용자 확정 수치 목표 (2026-10-07):** Machine-precision agreement는 목표가 아니다. Posterior inference·sampler behavior에 비해 오차가 무시할 만하면 더 단순하고 빠른 구현을 우선한다. Full polynomial의 제외 recurrence 및 ordinary floating-point cancellation을 허용하며, 고정밀 일치를 위한 매 좌표 재계산은 사용하지 않는다. Invalid draw·유의미한 predictor drift에 대한 검사는 유지한다.
+
 이전 프로젝트의 NUTS/MALA, GP, whitening 등은 가져오지 않는 방향을 제안한다. 프로젝트용 AGENTS.md에 현재 범위·notation·검증·연구 코드 원칙을 기록했다. BayesianCalibration의 지침은 참고 자료이며 이 프로젝트의 NumPy/SciPy 결정을 대체하지 않는다.
 
 ## 3. 공통 모델 명세
@@ -84,7 +86,7 @@ Normal baseline의 첨부 노트는 `/Users/jaehoonkim/Library/Mobile Documents/
 e_t(a_{1:j})=e_t(a_{1:j-1})+a_j e_{t-1}(a_{1:j-1}),\qquad e_0=1
 \]
 
-의 동적계획법이다. 전체 predictor 계산은 \(O(np\sum_d dR_d)\)이며, 모든 interaction design column을 대규모로 만들지 않는다. 기준 구현은 각 좌표에서 다른 loading의 다항식을 다시 계산하여 최신 상태를 사용하고 subtractive polynomial division을 피한다. 이에 따른 loading sweep 비용은 O(n p² Σ_d dR_d)일 수 있다. Prefix/suffix 캐시 최적화는 검증된 병목이 있을 때 후속으로 검토한다.
+의 동적계획법이다. 전체 predictor 계산은 \(O(np\sum_d dR_d)\)이며, 모든 interaction design column을 대규모로 만들지 않는다. 각 component의 전체 p개 변수에 대한 e_0,...,e_{d-1}을 pass 시작에 한 번 계산한다. 제외 계수는 q_0=1, q_t=e_t−a_j q_{t−1}로 계산하고 h_v=x_ij q_{d-1}을 사용한다. Loading이 바뀌면 old a_j의 제외 계수로 e_t←e_t+Δa_j q_{t−1}을 즉시 갱신한다. 이 recurrence의 ordinary cancellation을 허용하며 full polynomial을 좌표마다 다시 만들지 않는다. Polynomial·loading pass의 비용은 O(n p Σ_d dR_d), component별 임시 coefficient 저장은 O(nd)이다. Dense beta block의 비용까지 선형이라고 주장하지 않는다.
 
 한 loading \(v_{jk}^{(d)}\)에 대해 노트의 조건부 선형 표현을 사용한다.
 
@@ -524,13 +526,13 @@ Scan은 노트의 sweep 순서와 각 단계 내부의 오름차순 d→k→j로
 
 Draw 크기 추정은 float64·indicator dtype·chain/draw 수·요청한 파생값을 반영한다. 압축률을 가정하여 예산을 줄이지 않는다. 이 예산은 retained draw 저장의 한도이며 전체 sampler의 메모리·계산 가능성을 보장하는 값이 아니다. 일반 차원에서도 raw state의 기본 저장은 같지만, 실험별로 사용자가 저장 범위를 변경할 수 있다.
 
-Marginal log posterior는 ω를 적분한 Bernoulli likelihood와 **현재 모형의 전체 prior/hyperprior**를 사용한다. Reference SSP에서는 inactive slab·γ도 포함한다. 시간·상태 이동 기록은 diagnostics로 저장하며, 임의의 효과 threshold나 PIP 계산은 보류한다.
+Marginal log posterior는 현재 유지된 η의 Bernoulli log likelihood와 **현재 모형의 전체 prior/hyperprior**를 사용한다. 저장 시 likelihood를 두 번 계산하거나 관측 데이터 predictor를 다시 재구성하지 않는다. Log posterior 함수는 최신 η cache를 전제로 한다. Reference SSP에서는 inactive slab·γ도 포함한다. 시간·상태 이동 기록은 diagnostics로 저장하며, 임의의 효과 threshold나 PIP 계산은 보류한다.
 
 ### 9.3 수치·시간 실패와 캐시 점검 — 변경 가능한 제안 default
 
-매 update에서 분포 매개변수·draw·predictor가 유효한지 검사한다. Nonfinite 값, 비양수 분산/scale/ω, Cholesky 실패, 캐시 불일치는 해당 chain의 `numerical_failure`로 기록하고 중단한다. 예산 상한 도달은 `budget_exhausted`로 구별한다. 성공한 complete sweep까지만 보존하며 완료되지 않은 체인을 완료 draw 수로 채우거나 불완전 결과로 진단 통과를 선언하지 않는다.
+분포 draw와 update의 값/양수 support 검사는 primitive와 NumPy 오류 처리에서 수행한다. 전체 state shape·값 검사는 chain 시작, 매 cache_every(기본 100) sweeps 및 마지막 sweep에서 수행하며, 매 sweep마다 같은 state/유효 loading을 재구성해 검사하지 않는다. SSP π의 support는 hyperparameter draw 직후 확인한다. Nonfinite 값, 비양수 분산/scale/ω, Cholesky 실패, 캐시 불일치는 해당 chain의 `numerical_failure`로 기록하고 중단한다. 예산 상한 도달은 `budget_exhausted`로 구별한다. 성공한 complete sweep까지만 보존하며 완료되지 않은 체인을 완료 draw 수로 채우거나 불완전 결과로 진단 통과를 선언하지 않는다.
 
-η 캐시는 매 100 sweeps마다 현재 state에서 직접 재계산한 predictor와 비교한다. 제안 기준은 atol=1e−10, rtol=1e−8이다. 통과한 뒤 재계산값으로 캐시를 갱신해 누적 rounding을 줄이고, 실패하면 오차·chain·sweep·update를 기록한다. 작은 단위 검증에서는 각 좌표 갱신 직후에 더 엄격한 §10.1 기준으로 확인한다. 입력이나 prior를 clipping/floor/ridge/jitter로 바꾸어 실패를 숨기지 않는다.
+η 캐시는 매 100 sweeps마다 현재 state에서 직접 재계산한 predictor와 비교한다. 현재 기준은 atol=1e−8, rtol=1e−6이다. 통과한 뒤 재계산값으로 캐시를 갱신해 누적 rounding을 줄이고, 실패하면 오차·chain·sweep·update를 기록한다. 단위 검증은 §10.1의 동일한 inference-scale 기준과 Gaussian mean의 SD 대비 오차·상대 variance 오차를 사용한다. 예컨대 logit 오차 1e−6의 최대 probability 변화는 2.5e−7로 현재 probability MCSE 목표 0.01보다 훨씬 작다. 일반 차수·극단적 loading에서 오차가 항상 작다는 보장은 하지 않는다. 입력이나 prior를 clipping/floor/ridge/jitter로 바꾸어 실패를 숨기지 않는다.
 
 완료 상태와 진단 상태는 구별한다. 설정한 sweep 수를 채웠어도 §10.2 기준이 부족하면 `mixing_flagged`로 보고한다. `diagnostics_ok`는 지정한 점검에서 문제를 발견하지 않았다는 뜻이며 posterior 탐색의 증명이 아니다.
 
@@ -553,7 +555,7 @@ Marginal log posterior는 ω를 적분한 Bernoulli likelihood와 **현재 모�
 | P6a — 보류 | 추론 및 효과 요약 | 구조 PIP, sign mass, quantile/conditional summary 및 선택 규칙은 후속 논의·구현 |
 | P7 — 후속 | 13개 DGP 및 소규모 pilot | 중복 제거·support·norm·빈 support·독립 seed 확인; 모든 fitting 경로에 true support가 전달되지 않음을 확인; 명시된 잠정 설정으로 13개 DGP의 pilot을 수행하고 correctness·혼합·실패·시간/메모리·prior sensitivity 평가 |
 | P8 — 후속 | pilot 이후 설정 확정 및 본 실험 | pilot 근거로 n·replication·R_2,R_3·prior hyperparameters·MCMC budget을 결정하고 실행 전 기록; 선택 threshold 등 평가 규칙 확정; 13개 DGP에서 유효 결과와 실패·반복 오차 보고; seed·설정으로 주요 표·그림 재생성 |
-| P9 — 필요시 | 프로파일 기반 최적화 | P1 참조 및 posterior 검증 보존; 전체 sweep 시간을 비교하고 병목 개선의 근거 제시 |
+| P9 — recurrence·중복 계산 최적화 검증 완료 | 측정 기반 최적화 | P1 참조 및 posterior 검증 보존; 전체 sweep 시간을 비교하고 병목 개선의 근거 제시 |
 
 Scalable을 재개한 뒤 P4c 이후 두 축(R_d,p) 성능 실험을 설계한다. Active 수·support 크기를 기록하며 메모리, proposal 비용, complete-sweep 시간, 수락률, invariant ESS/초를 평가한다. 이 성능 검증을 P4c의 posterior correctness 대신 사용하지 않는다. 현재 Sampling 개발에서는 이 비교·성능 실험을 요구하지 않는다.
 
@@ -567,11 +569,11 @@ P5에서 quadrature가 가능한 차원으로 문제를 제한하며 고차원 p
 
 | 검증 종류 | 제안 default | 근거·판정 방식 |
 | --- | --- | --- |
-| Deterministic predictor·θ·h/g·좌표 직후 η | atol=1e−12, rtol=1e−10 | 명시적 interaction 조합 reference와 DP/캐시 계산의 작은 float64 rounding 차이를 허용. abs error ≤ atol + rtol×abs(reference)로 판정 |
-| Gaussian mean·variance 및 joint-density difference | atol=1e−12, rtol=1e−10 | Gaussian/IG·indicator 식을 독립 joint density의 차이와 비교. Density 자체보다 log-density difference를 사용 |
-| Cholesky·linear solve | 상대 backward residual ≤1e−10 | \(\lVert A m-b\rVert/(\lVert A\rVert\lVert m\rVert+\lVert b\rVert)\)를 검사. 0 분모인 exact-zero fixture는 절대오차로 검사 |
-| 주기적 η 캐시 검사 | 매 100 sweeps, atol=1e−10, rtol=1e−8 | 반복적인 delta update의 누적 rounding을 고려. 좌표별 단위 검증보다 완화하되 실패를 숨기지 않음 |
-| 독립 적분 reference | quadrature epsabs=1e−10, epsrel=1e−8 | 작은 main-only·interaction fixture의 기준량 계산. 더 엄격한 설정/다른 적분 범위에서 reference 안정성을 확인하고 잔여 수치 오차를 비교 tolerance에 포함 |
+| Deterministic predictor·θ·h/g·좌표 직후 η | atol=1e−8, rtol=1e−6 | 명시적 interaction reference와 recurrence/캐시 계산에서 ordinary cancellation을 허용. Machine-level 일치 대신 conditional mean/variance·posterior 비교로 오차 영향을 확인. abs error ≤ atol + rtol×abs(reference)로 판정 |
+| Gaussian mean·variance 및 joint-density difference | atol=1e−8, rtol=1e−6 | Gaussian/IG·indicator 식을 독립 joint density의 차이와 비교. Density 자체보다 log-density difference를 사용 |
+| Cholesky·linear solve | 상대 backward residual ≤1e−6 | \(\lVert A m-b\rVert/(\lVert A\rVert\lVert m\rVert+\lVert b\rVert)\)를 검사. 0 분모인 exact-zero fixture는 절대오차로 검사 |
+| 주기적 η 캐시 검사 | 매 100 sweeps 및 마지막 sweep, atol=1e−8, rtol=1e−6 | 반복적인 delta update의 누적 rounding을 고려. 동일한 inference-scale 기준으로 유의미한 drift를 검출하고 실패를 숨기지 않음 |
+| 독립 적분 reference | quadrature epsabs=1e−7, epsrel=1e−6; reference error/refinement ≤0.1 MCSE | 작은 main-only·interaction fixture의 기준량 계산. 독립 reference의 오차/격자 refinement가 Monte Carlo 오차의 10% 이하인지 확인하고 비교에 포함. Normal 2-way는 80/160-node tensor quadrature 사용 |
 | IID conditional sampling moment | case당 N=50,000, 평균 차이 ≤5 MCSE | 고정한 조건부 분포에서 반복 생성한 **독립 draw**만 대상. 알려진 variance로 MCSE를 계산하고, variance moment 검증은 충분한 moment가 존재하는 fixture를 사용 |
 | IID CDF·PIT 검증 | case당 N=50,000, 사전 정의한 검정 family의 총 α=0.001 | Continuous CDF의 PIT를 Uniform과 비교하고 Bernoulli 등 discrete 분포는 적절한 exact probability 검정을 사용. m개 검정이면 α/m의 Bonferroni 기준 적용 |
 | MCMC와 작은 독립 posterior reference | 유한 평균·CDF probability 차이 ≤5 MCSE + reference error | MCMC 자기상관을 반영한 MCSE를 사용. 비교량별 값을 사전 명시하고 서로 다른 prior의 posterior를 같다고 요구하지 않음 |
@@ -634,7 +636,7 @@ R-hat·ESS의 초기 기준과 rank/folding 정의는 [Vehtari et al.의 MCMC �
 | Q18 | Draw 저장·실패 정책 | §9.2–9.3에 제안 default 명시: thinning=1, full latent state·NPZ/JSON, ω 기본 제외, 512 MiB draw 예산, 캐시 검사·실패 상태 구분 |
 | Q19 | 검증 tolerance·diagnostics | §10.1–10.2에 제안 default 명시: deterministic atol/rtol, IID N=50,000·MCSE/CDF 기준, R-hat<1.01·bulk/tail ESS≥400 및 정밀도·이동 기록 |
 
-현재 Sampling 범위의 P1–P6 기준 구현을 제공했다. 전체 68개 테스트와 lint/format, locked offline 설치, sdist/wheel 빌드 및 9개 smoke fit(7,200 sweeps)이 통과했다. Smoke의 혼합 진단은 모두 mixing_flagged이며 수렴 또는 scientific accuracy를 주장하지 않는다. Q03/Q08의 Inference와 Q15/Q16의 Scalable SSP는 계속 보류한다. 다음 연구 단계는 P7의 full 13-DGP pilot과 충분한 표본에서의 혼합·비용·prior/rank sensitivity 조사이다. 본 실험 scientific setting은 pilot 이후 결정한다. GitHub 원격 연결·공개·push는 아직 수행하지 않았다.
+현재 Sampling 범위의 P1–P6 기준 구현과 수치 비용 refactor를 제공했다. 현재 80개 테스트와 lint/format 및 새 9개 smoke fit(7,200 sweeps)이 통과했다. 최초 구현의 locked offline 설치·sdist/wheel 빌드도 기록되어 있다. Smoke의 혼합 진단은 모두 mixing_flagged이며 수렴 또는 scientific accuracy를 주장하지 않는다. Q03/Q08의 Inference와 Q15/Q16의 Scalable SSP는 계속 보류한다. 다음 연구 단계는 P7의 full 13-DGP pilot과 충분한 표본에서의 혼합·비용·prior/rank sensitivity 조사이다. 본 실험 scientific setting은 pilot 이후 결정한다. GitHub 원격 연결·공개·push는 아직 수행하지 않았다.
 
 ## 12. 검토 기록
 
@@ -657,3 +659,5 @@ R-hat·ESS의 초기 기준과 rank/folding 정의는 [Vehtari et al.의 MCMC �
 - 같은 날 준비 상태 점검: 현재 Sampling 범위의 확정 사항·default·후속 미결 항목을 검토하여 개발 착수를 막는 추가 사용자 결정이 없음을 확인했다. P0를 개발 준비 완료로 표시하고 패키지 설치·라이브러리/수치 검증은 구현 단계의 작업으로 구분했다. 이 기록은 코드 구현 또는 sampler correctness 검증 완료를 뜻하지 않는다.
 
 - 같은 날 개발 진행 요청: 사용자가 현재 Sampling 범위의 개발과 GitHub 연동을 고려한 구조, uv.lock 사용 및 BayesianCalibration 참고를 요청했다. Python 3.13.15·uv_build 기준 환경, 자체 uv.lock, src 패키지·세 sampler·CLI·저장·diagnostics·configs·테스트와 GitHub 개발 파일을 구현했다. 전체 68개 테스트 및 lint/format·locked 설치·배포 빌드가 통과했고 9개 smoke fit은 수치 실패 없이 완료했다. 짧은 smoke의 혼합 진단은 모두 mixing_flagged로 보존했다. 로컬 Git을 초기화했으며 Archive·외부 노트는 변경하지 않았다. Full pilot·Inference·Scalable SSP·GitHub remote/push는 후속으로 남겼다.
+
+- 2026-10-07 수치 비용 검토: 사용자가 machine-precision agreement를 목표에서 제외하고 full-polynomial recurrence를 허용했다. 각 component의 coefficient table과 coordinate delta 갱신으로 제외 다항식 재계산을 제거했고, inactive SSP의 독립 prior 갱신을 batch 처리했다. 저장 시 관측 η·likelihood를 재사용하고 전체 state 검사는 주기적/마지막 boundary로 옮겼다. Dense Gaussian의 중복 finite scan·tril copy, truncated exponential의 별도 tiny-rate 계산 경로와 rounding된 upper endpoint의 불필요한 오류를 제거했다. Algebra/cache tolerance는 atol=1e−8,rtol=1e−6으로 기록하고 posterior reference refinement는 0.1 MCSE 기준으로 변경했다. PG 방법·prior·Gibbs target·truncated Gamma underflow fallback은 유지했다. 검증·측정 결과는 docs/validation.md의 새 절에 기록한다.

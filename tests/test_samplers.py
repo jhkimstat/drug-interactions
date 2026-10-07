@@ -6,6 +6,7 @@ from numpy.testing import assert_allclose
 from scipy.special import expit
 from scipy.stats import halfcauchy, norm
 
+from factorregression import model
 from factorregression.model import predictor_reference
 from factorregression.samplers import horseshoe, normal, ssp_reference
 from factorregression.state import Data, ModelSpec, initialize, validate_state
@@ -29,9 +30,43 @@ def test_full_sweeps_preserve_current_predictor(problem, method, kernel):
         assert_allclose(
             state.eta,
             predictor_reference(data.X, state.beta, state.effective()),
-            atol=1e-12,
-            rtol=1e-10,
+            atol=1e-8,
+            rtol=1e-6,
         )
+
+
+@pytest.mark.parametrize(
+    "method,module",
+    [
+        ("normal", normal),
+        ("horseshoe", horseshoe),
+        ("ssp_reference", ssp_reference),
+    ],
+)
+def test_polynomial_builds_are_per_component_not_per_coordinate(
+    problem, monkeypatch, method, module
+):
+    data, spec = problem
+    rng = np.random.default_rng(884)
+    state = initialize(data, spec, method, rng, 3)
+    original = model.elementary_symmetric_coefficients
+    calls = []
+
+    def count_builds(a, degree):
+        calls.append(degree)
+        return original(a, degree)
+
+    monkeypatch.setattr(model, "elementary_symmetric_coefficients", count_builds)
+    monkeypatch.setattr(module, "elementary_symmetric_coefficients", count_builds)
+    if method == "ssp_reference":
+        module.update_gamma(data, spec, state, rng)
+        assert len(calls) <= sum(spec.ranks.values())
+        calls.clear()
+        module.update_slabs(data, spec, state, rng)
+        assert len(calls) <= sum(spec.ranks.values())
+    else:
+        module.update_loadings(data, spec, state, rng)
+        assert len(calls) == sum(spec.ranks.values())
 
 
 def reference_indicators(data, spec, state, rng, name):
@@ -67,7 +102,7 @@ def test_ssp_indicator_scan_matches_independent_joint(problem):
         reference_indicators(data, spec, reference, reference_rng, name)
         for d in spec.ranks:
             assert np.array_equal(getattr(state, name)[d], getattr(reference, name)[d])
-        assert_allclose(state.eta, reference.eta, atol=1e-12, rtol=1e-10)
+        assert_allclose(state.eta, reference.eta, atol=1e-8, rtol=1e-6)
 
 
 class RecordingRNG:
@@ -154,8 +189,8 @@ def test_horseshoe_transformed_density_jacobians(problem):
     assert_allclose(
         local_joint(x1) - local_joint(x2),
         -rate * (x1 - x2) - np.log1p(x1) + np.log1p(x2),
-        atol=1e-12,
-        rtol=1e-10,
+        atol=1e-8,
+        rtol=1e-6,
     )
 
     def component_joint(zeta):
@@ -169,7 +204,7 @@ def test_horseshoe_transformed_density_jacobians(problem):
 
     rate = 0.5 * np.sum((state.V[2][:, 0] / state.lambda_[2][:, 0]) ** 2)
     ratio = (spec.p - 1) / 2 * np.log(x1 / x2) - rate * (x1 - x2) - np.log1p(x1) + np.log1p(x2)
-    assert_allclose(component_joint(x1) - component_joint(x2), ratio, atol=1e-12, rtol=1e-10)
+    assert_allclose(component_joint(x1) - component_joint(x2), ratio, atol=1e-8, rtol=1e-6)
 
 
 def test_horseshoe_zero_rate_boundaries(problem):

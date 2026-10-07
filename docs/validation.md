@@ -68,11 +68,12 @@ not been exercised on a remote repository.
 
 ## Numerical implementation notes
 
-The predictor uses elementary-symmetric-polynomial dynamic programming. A loading's
-excluded polynomial is recomputed from the current remaining loadings rather than obtained
-through subtractive polynomial division. This is deliberately a transparent reference
-implementation; a loading sweep can cost O(n p² Σ_d d R_d), and the beta precision is dense.
-The implementation supports general dimensions without promising scalability.
+The predictor uses elementary-symmetric-polynomial dynamic programming. Following the
+2026-10-07 numerical-cost review, each component builds coefficients once per coordinate
+pass. Exclusion uses q_t=e_t−a_j q_{t−1}; after a draw, coefficients receive Δa_j q_{t−1}.
+Ordinary cancellation is accepted. Polynomial/loading-pass cost is O(n p Σ_d d R_d),
+with O(nd) temporary coefficient storage per component. The beta precision is still dense,
+and no general range of computational feasibility or convergence is promised.
 
 Numerical failures stop the affected fit and preserve completed retained draws with failure
 context. Constant or incomplete chain diagnostics are marked undefined/incomplete.
@@ -81,3 +82,79 @@ are recorded separately. Passing the tests does not prove global posterior explo
 
 The editable pilot defaults and acceptance thresholds are in the implementation plan and
 `configs/`. Their numeric choices are not final scientific settings.
+
+## Numerical-cost review — 2026-10-07
+
+The user explicitly removed machine-level agreement as a project objective. The refactor
+keeps the model and Gibbs conditionals and uses ordinary float64 recurrences with errors
+judged against inference scale and Monte Carlo uncertainty.
+
+Changes:
+
+- Build the full-variable coefficients e_0,...,e_{d-1} once per component/pass. Compute
+  exclusions by q_t=e_t−a_j q_{t−1}, and update e_t by Δa_j q_{t−1} after every draw.
+  Normal, Horseshoe and the active SSP indicator/slab passes all use this table.
+- Batch the independent prior draws for inactive SSP components. Their gamma and slabs
+  are still retained, updated and included in all hyperparameter counts.
+- Reuse maintained observed-data eta and its likelihood in retained log posterior values.
+  Only requested prediction patterns need another predictor calculation. Disabled derived
+  outputs do not construct effective loadings or evaluate an empty predictor.
+- Check full state at initialization, periodic cache boundaries and the final sweep;
+  per-draw support/nonfinite checks and NumPy overflow/invalid detection remain. Avoid
+  constructing effective SSP loadings or Python lists of every scalar during validation.
+- Use Cholesky directly, avoiding the separate triangular copy, and skip repeated SciPy
+  finite scans of already validated inputs. Positive-definiteness errors are still reported.
+- Remove the separate tiny-positive-rate exponential path, using log1p/expm1 directly.
+  Accept truncation-upper-bound values that round to the bound; values beyond the bound,
+  zero/nonfinite draws and invalid parameters remain errors. The Gamma underflow rejection
+  fallback is retained because replacing/removing it can materially invalidate sampling.
+
+Algebra and predictor/cache comparisons now use atol=1e−8, rtol=1e−6. This is a declared
+inference-scale numerical policy rather than an attempt to retain every float64 digit.
+For comparison, a logit perturbation of 1e−6 changes a probability by at most 2.5e−7,
+well below the pilot probability-MCSE target of 0.01. This is not a uniform error bound
+for every degree or extreme loading configuration; material cache drift still fails.
+
+Posterior quadrature uses epsabs=1e−7, epsrel=1e−6 and requires estimated numerical
+error/refinement ≤0.1 MCSE. The Normal interaction reference uses 80/160 nodes per axis
+instead of 320/640, giving 16 times fewer tensor grid cells. The two independent posterior
+comparisons still pass their unchanged R-hat, ESS and 5-MCSE requirements. Exact checks
+for unchanged inactive predictors, integer counts and deterministic replay are retained
+because they test logical invariants/reproducibility rather than a numerical-accuracy goal.
+
+Validation after the final refactor: **80 tests passed in 6.14 seconds**; lint/format and
+diff checks passed. New tests cover cached coefficient updates across multiple passes and
+degrees, one polynomial build per component rather than per coordinate, skipped observed
+predictor reconstruction, harmless versus material drift, and rounded truncation endpoints.
+A 100-variable fixture verifies conditional-mean differences below 1e−6 posterior conditional
+SD and relative conditional-variance differences below 1e−6 against direct exclusion.
+Nine smoke fits (7,200 sweeps) completed without numerical failures; all short-run mixing
+statuses remain `mixing_flagged`. Results are in `outputs/smoke-recurrence-20261007/`.
+
+### Local before/after measurements
+
+Same Python/library environment as above, macOS ARM64. BLAS thread environment was limited
+to one. Measurements compare the pre-refactor source with the new source, using the same
+observed data, seed and initial-state type. Times are illustrative local medians, not a
+performance or mixing guarantee. Sampler timings depend on active state and do not measure
+ESS/second or imply identical floating-point trajectories.
+
+| Operation | Before | After | Ratio |
+| --- | --- | --- | --- |
+| Slope pass: n=500,p=50,d=3 | 6.20 ms | 0.599 ms | 10.4× |
+| Slope pass: n=500,p=100,d=3 | 24.54 ms | 1.191 ms | 20.6× |
+| Normal sweep: n=500,p=80,D=3,R_2=R_3=1 | 26.98 ms | 2.878 ms | 9.4× |
+| Horseshoe sweep: same dimensions | 27.86 ms | 4.218 ms | 6.6× |
+| Reference SSP sweep: same dimensions | 27.89 ms | 0.690 ms | 40.4× |
+| Normal fit: n=200,p=5,D=3,R_2=R_3=5 | 0.926 s | 0.707 s | 1.31× |
+| Horseshoe fit: same dimensions | 1.222 s | 1.009 s | 1.21× |
+| Reference SSP fit: same dimensions | 1.338 s | 0.755 s | 1.77× |
+
+Slope-pass medians use seven repetitions with small sequential coordinate changes. Sweep
+medians use twenty timed sweeps after five warm-up sweeps. Fit medians use three repetitions,
+one chain, burn-in 100 and retained 500, including draw collection and insufficient-chain
+diagnostic status but no file writing. At p=5 the isolated Normal/Horseshoe sweep times were
+roughly unchanged (Horseshoe was about 7% slower in this short measurement); observed-data
+snapshot and validation savings improve the measured full fit. The large SSP speedup also
+includes avoiding inactive-component polynomial work. General performance remains limited
+by the dense beta block and the actual posterior state.

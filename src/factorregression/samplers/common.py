@@ -2,6 +2,7 @@ import numpy as np
 
 from ..conditionals import beta_parameters, draw_precision_normal, variance_parameters
 from ..distributions import inverse_gamma, polya_gamma
+from ..model import update_symmetric_coefficients
 
 
 def update_common(data, spec, state, rng):
@@ -17,7 +18,7 @@ def update_common(data, spec, state, rng):
     state.sigma_beta2 = float(inverse_gamma(a, b, rng))
 
 
-def update_loading(data, state, v, j, h, variance, rng):
+def update_loading(data, state, v, j, h, variance, rng, polynomial=None):
     from ..conditionals import loading_parameters
 
     old = v[j]
@@ -27,4 +28,6 @@ def update_loading(data, state, v, j, h, variance, rng):
     if not np.isfinite(value):
         raise FloatingPointError("nonfinite loading draw")
     state.eta += (value - old) * h
+    if polynomial is not None:
+        update_symmetric_coefficients(polynomial, data.X[:, j] * old, data.X[:, j] * (value - old))
     v[j] = value

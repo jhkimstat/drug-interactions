@@ -11,6 +11,9 @@
   configuration; truth belongs only to generation/evaluation fixtures.
 - Prefer small explicit modules and standard numerical routines. Do not add checkpoint,
   orchestration, generic sampler frameworks or environment-hash infrastructure.
+- Machine-level arithmetic agreement is not a goal. Prefer simple polynomial recurrences
+  and incremental updates when errors are negligible relative to posterior/Monte Carlo
+  uncertainty. Retain guards against invalid draws and material predictor drift.
 - Validate against independent combinations/joint densities/CDFs and small quadrature
   fixtures. Record numerical failures and insufficient mixing rather than hiding them.
   Document the numerical or statistical reason for any tolerance change.

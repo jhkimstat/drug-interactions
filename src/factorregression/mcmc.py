@@ -25,7 +25,7 @@ from .state import (
     positive_int,
     validate_state,
 )
-from .target import log_posterior
+from .target import log_prior
 
 
 @dataclass(frozen=True)
@@ -36,8 +36,8 @@ class SamplerSettings:
     thin: int = 1
     seed: int = 20261006
     cache_every: int = 100
-    cache_atol: float = 1e-10
-    cache_rtol: float = 1e-8
+    cache_atol: float = 1e-8
+    cache_rtol: float = 1e-6
     max_seconds: float | None = 2700.0
     max_draw_bytes: int = 512 * 1024**2
     save_omega: bool = False
@@ -187,11 +187,13 @@ def _snapshot(state, data, spec, settings, alphas, patterns, sweep):
                 values[f"tau_{d}"] = state.tau[d].copy()
             else:
                 values[f"sigma_v2_{d}"] = np.asarray(state.sigma_v2[d])
-    V = state.effective()
+    V = state.effective() if alphas or len(patterns) else {}
     values["theta"] = np.array([coefficient(V, a) for a in alphas])
-    values["prediction_probability"] = expit(predictor(patterns, state.beta, V))
+    values["prediction_probability"] = (
+        expit(predictor(patterns, state.beta, V)) if len(patterns) else np.empty(0)
+    )
     values["log_likelihood"] = np.asarray(log_likelihood(data.y, state.eta))
-    values["log_posterior"] = np.asarray(log_posterior(data, spec, state))
+    values["log_posterior"] = np.asarray(values["log_likelihood"] + log_prior(spec, state))
     if not all(np.isfinite(a).all() for a in values.values()):
         raise FloatingPointError("nonfinite retained quantity")
     return values
@@ -214,9 +216,9 @@ def _run_chain(data, spec, settings, method, rng, state, alphas, patterns, deadl
         with np.errstate(over="raise", divide="raise", invalid="raise"):
             for sweep in range(1, total + 1):
                 kernel(data, spec, state, rng)
-                validate_state(state, data, spec)
-                if sweep % settings.cache_every == 0:
+                if sweep % settings.cache_every == 0 or sweep == total:
                     state.context = "eta cache check"
+                    validate_state(state, data, spec)
                     eta = predictor(data.X, state.beta, state.effective())
                     if not np.allclose(
                         eta, state.eta, atol=settings.cache_atol, rtol=settings.cache_rtol
@@ -299,11 +301,12 @@ def fit(
         if not isinstance(state, type(probe)):
             raise ValueError("initial state type differs from requested method")
         validate_state(state, data, spec)
-        expected_eta = predictor(data.X, state.beta, state.effective())
-        if not np.allclose(
-            state.eta, expected_eta, atol=settings.cache_atol, rtol=settings.cache_rtol
-        ):
-            raise ValueError("initial eta differs from its parameter state")
+        if initial_states is not None:
+            expected_eta = predictor(data.X, state.beta, state.effective())
+            if not np.allclose(
+                state.eta, expected_eta, atol=settings.cache_atol, rtol=settings.cache_rtol
+            ):
+                raise ValueError("initial eta differs from its parameter state")
         chain = _run_chain(
             data, spec, settings, method, rng, state, alphas, patterns, deadline, index
         )

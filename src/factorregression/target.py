@@ -4,15 +4,14 @@ import numpy as np
 from scipy.special import xlog1py, xlogy
 from scipy.stats import beta, halfcauchy, invgamma, norm
 
-from .model import log_likelihood, predictor
+from .model import log_likelihood
 from .state import HorseshoeState, SSPState
 
 
-def log_posterior(data, spec, state):
+def log_prior(spec, state):
+    """Full parameter prior, including inactive SSP variables."""
     p = spec.prior
-    eta = predictor(data.X, state.beta, state.effective())
-    value = log_likelihood(data.y, eta)
-    value += norm.logpdf(state.beta, scale=np.sqrt(state.sigma_beta2)).sum()
+    value = norm.logpdf(state.beta, scale=np.sqrt(state.sigma_beta2)).sum()
     value += invgamma.logpdf(state.sigma_beta2, p.a_beta, scale=p.b_beta)
     for d in spec.ranks:
         if isinstance(state, HorseshoeState):
@@ -31,3 +30,8 @@ def log_posterior(data, spec, state):
                 value += (xlogy(bits, pi) + xlog1py(1 - bits.astype(int), -pi)).sum()
                 value += beta.logpdf(pi, a, b)
     return float(value)
+
+
+def log_posterior(data, spec, state):
+    """Use the current maintained eta, rather than rebuilding it just for diagnostics."""
+    return log_likelihood(data.y, state.eta) + log_prior(spec, state)

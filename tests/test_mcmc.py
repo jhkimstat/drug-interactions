@@ -5,11 +5,14 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
-from factorregression import ModelSpec, SamplerSettings, fit
+from factorregression import ModelSpec, SamplerSettings, fit, mcmc
 from factorregression.cli import load_configuration, main
 from factorregression.diagnostics import scalar_diagnostics
 from factorregression.mcmc import rng_stream
+from factorregression.model import log_likelihood, predictor_reference
 from factorregression.samplers import normal
+from factorregression.state import initialize
+from factorregression.target import log_prior
 
 
 @pytest.mark.parametrize("method", ["normal", "horseshoe", "ssp_reference"])
@@ -69,6 +72,48 @@ def test_budget_and_numerical_failure_are_not_reported_as_complete(problem, monk
     assert result.metadata["status"] == "numerical_failure"
     assert result.chains[0].metadata["retained_draws"] == 0
     assert "test numerical failure" in result.chains[0].metadata["failure"]["reason"]
+
+
+@pytest.mark.parametrize("drift,expected", [(1e-10, "completed"), (1e-3, "numerical_failure")])
+def test_cache_guard_accepts_rounding_but_rejects_material_drift(
+    problem, monkeypatch, drift, expected
+):
+    data, spec = problem
+
+    def drifting_kernel(data, spec, state, rng):
+        state.eta += drift
+
+    monkeypatch.setattr(normal, "sweep", drifting_kernel)
+    result = fit(
+        data.X,
+        data.y,
+        method="normal",
+        spec=spec,
+        settings=SamplerSettings(chains=1, burn_in=0, draws=2, cache_every=1),
+    )
+    assert result.metadata["status"] == expected
+    if expected == "numerical_failure":
+        assert "cache mismatch" in result.chains[0].metadata["failure"]["reason"]
+
+
+def test_snapshot_reuses_observed_eta_and_evaluates_only_requested_patterns(problem, monkeypatch):
+    data, spec = problem
+    state = initialize(data, spec, "normal", np.random.default_rng(841))
+    reference = log_likelihood(data.y, predictor_reference(data.X, state.beta, state.effective()))
+    original = mcmc.predictor
+    rows = []
+
+    def record_rows(X, beta, V):
+        rows.append(len(X))
+        return original(X, beta, V)
+
+    monkeypatch.setattr(mcmc, "predictor", record_rows)
+    values = mcmc._snapshot(state, data, spec, SamplerSettings(), (), data.X[:2], 1)
+    assert rows == [2]
+    assert_allclose(values["log_likelihood"], reference, atol=1e-8, rtol=1e-6)
+    assert_allclose(
+        values["log_posterior"], reference + log_prior(spec, state), atol=1e-8, rtol=1e-6
+    )
 
 
 def test_memory_and_configuration_guards(problem, tmp_path):

@@ -1,7 +1,7 @@
 """Parameters of the conditionals in the modeling notes."""
 
 import numpy as np
-from scipy.linalg import cho_factor, cho_solve, solve_triangular
+from scipy.linalg import cho_solve, cholesky, solve_triangular
 from scipy.special import logit
 
 
@@ -29,13 +29,14 @@ def beta_parameters(X_tilde, omega, kappa, r, sigma_beta2):
     precision = X_tilde.T @ (omega[:, None] * X_tilde)
     precision += np.eye(X_tilde.shape[1]) / sigma_beta2
     linear = X_tilde.T @ (kappa - omega * r)
-    factor, _ = cho_factor(precision, lower=True)
-    mean = cho_solve((factor, True), linear)
-    return mean, np.tril(factor)
+    # Inputs are validated by the sampler; avoid repeated scans and a separate tril copy.
+    lower = cholesky(precision, lower=True, check_finite=False)
+    mean = cho_solve((lower, True), linear, check_finite=False)
+    return mean, lower
 
 
 def draw_precision_normal(mean, lower, rng, size=None):
     """If Q=L L^T, noise is L^{-T} z, not L^{-1} z."""
     shape = (len(mean),) if size is None else (len(mean), size)
-    noise = solve_triangular(lower.T, rng.normal(size=shape), lower=False)
+    noise = solve_triangular(lower.T, rng.normal(size=shape), lower=False, check_finite=False)
     return mean + noise if size is None else mean[:, None] + noise

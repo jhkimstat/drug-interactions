@@ -187,22 +187,21 @@ def validate_state(state: State, data: Data, spec: ModelSpec) -> None:
     if state.omega.shape != data.y.shape:
         raise ValueError("invalid omega shape")
     arrays = [state.beta, state.eta, state.omega]
-    positive = [state.sigma_beta2, *state.omega]
-    effective = state.effective()
-    if set(effective) != set(spec.ranks):
+    positive = [state.omega, np.asarray(state.sigma_beta2)]
+    loadings = state.tilde_v if isinstance(state, SSPState) else state.V
+    if set(loadings) != set(spec.ranks):
         raise ValueError("state orders differ from model specification")
     for d, r in spec.ranks.items():
-        if effective[d].shape != (spec.p, r):
+        if loadings[d].shape != (spec.p, r):
             raise ValueError(f"invalid loading shape at order {d}")
-        arrays.append(effective[d])
+        arrays.append(loadings[d])
         if isinstance(state, HorseshoeState):
             if state.lambda_[d].shape != (spec.p, r) or state.tau[d].shape != (r,):
                 raise ValueError("invalid horseshoe scale shape")
             arrays.extend([state.lambda_[d], state.tau[d]])
-            positive.extend(state.lambda_[d].ravel())
-            positive.extend(state.tau[d])
+            positive.extend([state.lambda_[d], state.tau[d]])
         else:
-            positive.append(state.sigma_v2[d])
+            positive.append(np.asarray(state.sigma_v2[d]))
         if isinstance(state, SSPState):
             if state.z[d].shape != (r,) or state.gamma[d].shape != (spec.p, r):
                 raise ValueError("invalid SSP indicator shape")
@@ -210,10 +209,9 @@ def validate_state(state: State, data: Data, spec: ModelSpec) -> None:
                 raise ValueError("SSP indicators must be binary")
             if state.tilde_v[d].shape != (spec.p, r):
                 raise ValueError("invalid slab shape")
-            arrays.append(state.tilde_v[d])
             if not (0 < state.pi_z[d] < 1 and 0 < state.pi_gamma[d] < 1):
                 raise ValueError("inclusion probabilities must be strictly between 0 and 1")
     if not all(np.isfinite(a).all() for a in arrays):
         raise ValueError("nonfinite state")
-    if not np.isfinite(positive).all() or not (np.array(positive) > 0).all():
+    if not all(np.isfinite(a).all() and (a > 0).all() for a in positive):
         raise ValueError("variances, scales and omega must be positive and finite")

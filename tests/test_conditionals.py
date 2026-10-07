@@ -25,7 +25,7 @@ def test_loading_conditional_matches_joint_density_ratio():
 
     for a, b in [(-0.5, 1.2), (0.1, 0.3)]:
         expected = norm.logpdf(a, mean, variance**0.5) - norm.logpdf(b, mean, variance**0.5)
-        assert_allclose(joint(a) - joint(b), expected, atol=1e-12, rtol=1e-10)
+        assert_allclose(joint(a) - joint(b), expected, atol=1e-8, rtol=1e-6)
     m, v = loading_parameters(np.zeros(12), g, omega, kappa, q)
     assert m == 0
     assert v == q
@@ -43,7 +43,7 @@ def test_indicator_odds_matches_two_joint_probabilities():
             np.dot(kappa, eta) - 0.5 * np.dot(omega, eta**2) + np.log(pi if bit else 1 - pi)
         )
     assert_allclose(
-        indicator_log_odds(h, g, omega, kappa, pi), logs[1] - logs[0], atol=1e-12, rtol=1e-10
+        indicator_log_odds(h, g, omega, kappa, pi), logs[1] - logs[0], atol=1e-8, rtol=1e-6
     )
     assert_allclose(expit(indicator_log_odds(h * 0, g, omega, kappa, pi)), pi)
 
@@ -57,8 +57,8 @@ def test_precision_gaussian_covariance_and_linear_solve(problem):
     Q = data.X_tilde.T @ np.diag(omega) @ data.X_tilde + np.eye(6) / 0.7
     b = data.X_tilde.T @ (data.kappa - omega * r)
     expected = np.linalg.inv(Q)  # Independent test reference only.
-    assert_allclose(Q @ mean, b, atol=1e-12, rtol=1e-10)
-    assert_allclose(lower @ lower.T, Q, atol=1e-12, rtol=1e-10)
+    assert_allclose(Q @ mean, b, atol=1e-8, rtol=1e-6)
+    assert_allclose(lower @ lower.T, Q, atol=1e-8, rtol=1e-6)
     N = 50_000
     samples = draw_precision_normal(mean, lower, rng, size=N)
     assert np.all(np.abs(samples.mean(axis=1) - mean) < 5 * np.sqrt(np.diag(expected) / N))

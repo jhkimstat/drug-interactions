@@ -41,14 +41,11 @@ def truncated_exponential(rate, upper, rng):
     c = rate * upper
     if c == 0:
         value = upper * u
-    elif c < 1e-5:
-        # Normalize to the unit interval. Division before scaling avoids underflow.
-        value = upper * (-np.log1p(-u * -np.expm1(-c)) / c)
     else:
         value = -np.log1p(-u * -np.expm1(-c)) / rate
     positive_finite(value, "truncated exponential draw")
-    if value >= upper:
-        raise FloatingPointError("truncated exponential draw reached its upper bound")
+    if value > upper:
+        raise FloatingPointError("truncated exponential draw exceeded its upper bound")
     return float(value)
 
 
@@ -69,7 +66,7 @@ def truncated_gamma(shape, rate, upper, rng):
         mass = gammainc(shape, c)
         q = open_uniform(rng) * mass
         value = gammaincinv(shape, q) / rate if q > 0 else 0.0
-        if not 0 < value < upper or not np.isfinite(value):
+        if not 0 < value <= upper or not np.isfinite(value):
             for _ in range(100_000):
                 if c <= 1:
                     t = np.exp(np.log(open_uniform(rng)) / shape)
@@ -81,7 +78,7 @@ def truncated_gamma(shape, rate, upper, rng):
                 else:
                     # A numerically exceptional inverse CDF, not a tiny lower tail.
                     trial = rng.gamma(shape) / rate
-                    if 0 < trial < upper:
+                    if 0 < trial <= upper:
                         value = trial
                         break
                     continue
@@ -91,6 +88,6 @@ def truncated_gamma(shape, rate, upper, rng):
             else:
                 raise FloatingPointError("truncated Gamma rejection limit exceeded")
     positive_finite(value, "truncated Gamma draw")
-    if value >= upper:
-        raise FloatingPointError("truncated Gamma draw reached its upper bound")
+    if value > upper:
+        raise FloatingPointError("truncated Gamma draw exceeded its upper bound")
     return float(value)

@@ -8,23 +8,50 @@ from numpy.typing import NDArray
 FloatArray = NDArray[np.float64]
 
 
-def elementary_symmetric(a: FloatArray, degree: int) -> FloatArray:
-    """e_degree for each row; O(n * columns * degree) and O(n * degree) storage."""
+def elementary_symmetric_coefficients(a: FloatArray, degree: int) -> FloatArray:
+    """Rows of (e_0,...,e_degree), built once per component/coordinate pass."""
     n, p = a.shape
-    if degree > p:
-        return np.zeros(n)
     e = np.zeros((n, degree + 1))
     e[:, 0] = 1.0
     for j in range(p):
         for t in range(min(degree, j + 1), 0, -1):
             e[:, t] += a[:, j] * e[:, t - 1]
-    return e[:, degree]
+    return e
 
 
-def loading_slope(X: FloatArray, v: FloatArray, d: int, j: int) -> FloatArray:
-    """Current h_v; recomputing the excluded polynomial avoids subtraction cancellation."""
-    other = np.arange(X.shape[1]) != j
-    return X[:, j] * elementary_symmetric(X[:, other] * v[other], d - 1)
+def elementary_symmetric(a: FloatArray, degree: int) -> FloatArray:
+    """e_degree for each row; O(n * columns * degree) and O(n * degree) storage."""
+    if degree > a.shape[1]:
+        return np.zeros(a.shape[0])
+    return elementary_symmetric_coefficients(a, degree)[:, degree]
+
+
+def loading_slope(
+    X: FloatArray, v: FloatArray, d: int, j: int, polynomial: FloatArray | None = None
+) -> FloatArray:
+    """Current h_v from q_0=1, q_t=e_t-a_j*q_{t-1}.
+
+    Samplers pass a current component polynomial, making this O(n*d). The optional
+    standalone path builds the full polynomial once. Ordinary cancellation is accepted.
+    """
+    if polynomial is None:
+        polynomial = elementary_symmetric_coefficients(X * v, d - 1)
+    a_j = X[:, j] * v[j]
+    excluded = np.ones(X.shape[0])
+    for t in range(1, d):
+        excluded = polynomial[:, t] - a_j * excluded
+    return X[:, j] * excluded
+
+
+def update_symmetric_coefficients(
+    polynomial: FloatArray, old_a: FloatArray, delta_a: FloatArray
+) -> None:
+    """Update e_t in place by delta_a*q_{t-1}, using the old excluded coefficients."""
+    excluded = np.ones(polynomial.shape[0])
+    for t in range(1, polynomial.shape[1]):
+        next_excluded = polynomial[:, t] - old_a * excluded
+        polynomial[:, t] += delta_a * excluded
+        excluded = next_excluded
 
 
 def interactions(X: FloatArray, V: dict[int, FloatArray]) -> FloatArray:

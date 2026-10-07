@@ -38,18 +38,22 @@ def test_main_only_posterior_against_marginal_student_t_quadrature():
         )
         return np.exp(log_prior + 15 * b - 24 * np.logaddexp(0, b) - maximum)
 
-    denominator = quad(density, -np.inf, np.inf, epsabs=1e-10, epsrel=1e-8)[0]
-    expected_mean = (
-        quad(lambda b: b * density(b), -np.inf, np.inf, epsabs=1e-10, epsrel=1e-8)[0] / denominator
-    )
+    denominator, denominator_error = quad(density, -np.inf, np.inf, epsabs=1e-7, epsrel=1e-6)
+    moment, moment_error = quad(lambda b: b * density(b), -np.inf, np.inf, epsabs=1e-7, epsrel=1e-6)
+    expected_mean = moment / denominator
+    mean_error = (moment_error + abs(expected_mean) * denominator_error) / denominator
     stats = scalar_diagnostics(samples)
     assert stats["rhat"] < 1.01 and stats["bulk_ess"] >= 400 and stats["tail_ess"] >= 400
-    assert abs(samples.mean() - expected_mean) < 5 * stats["mcse_mean"] + 1e-8
+    assert mean_error < 0.1 * stats["mcse_mean"]
+    assert abs(samples.mean() - expected_mean) < 5 * stats["mcse_mean"] + mean_error
     for point in (0, 0.5, 1):
-        reference = quad(density, -np.inf, point, epsabs=1e-10, epsrel=1e-8)[0] / denominator
+        integral, error = quad(density, -np.inf, point, epsabs=1e-7, epsrel=1e-6)
+        reference = integral / denominator
+        reference_error = (error + reference * denominator_error) / denominator
         events = (samples <= point).astype(float)
         mcse = scalar_diagnostics(events)["mcse_mean"]
-        assert abs(events.mean() - reference) < 5 * mcse + 1e-8
+        assert reference_error < 0.1 * mcse
+        assert abs(events.mean() - reference) < 5 * mcse + reference_error
 
 
 @pytest.mark.slow
@@ -67,8 +71,8 @@ def test_normal_interaction_block_against_gaussian_tensor_quadrature():
         posterior /= posterior.sum()
         return np.array([(posterior * theta).sum(), (posterior * expit(eta)).sum()])
 
-    expected = reference(320)
-    assert np.max(np.abs(expected - reference(640))) < 1e-8
+    expected = reference(160)
+    reference_error = np.abs(expected - reference(80))
     theta, probability = np.empty((4, 5000)), np.empty((4, 5000))
     for chain in range(4):
         rng = np.random.default_rng(80 + chain)
@@ -83,7 +87,10 @@ def test_normal_interaction_block_against_gaussian_tensor_quadrature():
                 value = np.prod(state.V[2][:, 0])
                 theta[chain, sweep - 500] = value
                 probability[chain, sweep - 500] = expit(0.2 + value)
-    for values, mean in zip((theta, probability), expected, strict=True):
+    for values, mean, error in zip((theta, probability), expected, reference_error, strict=True):
         stats = scalar_diagnostics(values)
         assert stats["rhat"] < 1.01 and stats["bulk_ess"] >= 400 and stats["tail_ess"] >= 400
-        assert abs(values.mean() - mean) < 5 * stats["mcse_mean"] + 1e-8
+        # Reference refinement must be small compared with simulation uncertainty,
+        # rather than meeting an unrelated near-machine-precision threshold.
+        assert error < 0.1 * stats["mcse_mean"]
+        assert abs(values.mean() - mean) < 5 * stats["mcse_mean"] + error

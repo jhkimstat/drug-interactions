@@ -1,7 +1,7 @@
 import numpy as np
 
 from ..distributions import open_uniform, positive_finite, truncated_exponential, truncated_gamma
-from ..model import loading_slope
+from ..model import elementary_symmetric_coefficients, loading_slope
 from .common import update_common, update_loading
 
 
@@ -9,11 +9,12 @@ def update_loadings(data, spec, state, rng):
     for d, rank in spec.ranks.items():
         for k in range(rank):
             v = state.V[d][:, k]
+            polynomial = elementary_symmetric_coefficients(data.X * v, d - 1)
             for j in range(spec.p):
                 state.context = f"V[{d},{j},{k}]"
-                h = loading_slope(data.X, v, d, j)
+                h = loading_slope(data.X, v, d, j, polynomial)
                 variance = (state.lambda_[d][j, k] * state.tau[d][k]) ** 2
-                update_loading(data, state, v, j, h, variance, rng)
+                update_loading(data, state, v, j, h, variance, rng, polynomial)
 
 
 def update_local_scales(spec, state, rng):
