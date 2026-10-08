@@ -317,3 +317,16 @@ Validation on the existing macOS ARM64 environment:
 The new truth-based risks are single-dataset simulation evaluations, not repeated-sample
 coverage or proof of sampling correctness. Long-run results must satisfy their diagnostic
 and reference-MCSE criteria before being used to assess a pilot's Monte Carlo stability.
+
+## GitHub-to-Unity prepared-data transfer — 2026-10-08
+
+At the user's request, `.gitignore` now includes a narrow exception for
+`data/pilot-long-run-20261008/`. Its 29 files (13 observations, 13 truth fixtures, manifest
+and two frozen configs; 52,032 bytes total) are eligible for Git transfer; all 29 were
+already tracked at the final visibility check. Other data,
+outputs, builds, environments and local credentials remain ignored. Git visibility checks
+verified all 29 files and the unrelated exclusions. No prepared arrays/settings were changed.
+Unity/README instructions now use the cloned prepared directory directly and reserve the
+prepare command for a new output path. The earlier preparation-run observation that all
+local data were ignored is superseded by this exception. The agent did not issue commit or push commands
+during this change. **103 tests passed in 10.69 seconds**; Ruff and diff checks passed.

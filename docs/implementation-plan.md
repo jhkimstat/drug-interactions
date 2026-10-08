@@ -438,7 +438,7 @@ Normal에서 E[(σ_v²)^2]=E[(σ_v²)^3]=1/6이므로 R_d=5일 때 각 2·3차 c
 
 현재 범위는 13개 DGP×1 dataset×3 methods의 pilot(39 fits)과, no-interaction·sparse-3way-s3·dense-3way-s3의 동일 데이터에 대한 long-run(9 fits)이다. Long-run은 4 chains, burn-in 4,000+retained 20,000으로 총 864,000 sweeps를 요청한다. 두 단계 합계는 1,488,000 sweeps이며, 완료 또는 수렴을 미리 주장하지 않는다. 반복 데이터셋 실험과 본 실험은 후속 범위다.
 
-`simulation.py`는 note support·차수별 norm·빈 support를 구현한다. `python -m factorregression.experiment prepare`가 n=200의 13개 observations/truth 파일과 설정 사본·task manifest를 저장한다. `run`은 observations와 model/sampling 설정만 읽고, 각 fit의 4개 chain을 순차 실행한다. `scripts/unity_experiment.sh`는 ASC Unity batch, CPU=1, memory=4 GiB를 기본으로 사용한다. 환경 설치는 한 번만 `uv sync --locked`로 수행하고 array 내부에서는 이미 설치한 Python을 직접 실행한다. 명령과 경로는 [Unity 실행 안내](unity.md)에 정리한다.
+`simulation.py`는 note support·차수별 norm·빈 support를 구현한다. `python -m factorregression.experiment prepare`가 n=200의 13개 observations/truth 파일과 설정 사본·task manifest를 저장한다. `run`은 observations와 model/sampling 설정만 읽고, 각 fit의 4개 chain을 순차 실행한다. `data/pilot-long-run-20261008/`의 준비 데이터·truth·manifest·고정 설정은 GitHub 전송을 위해 ignore 예외로 포함한다. Unity에서 clone/pull한 뒤 해당 데이터 경로를 직접 사용한다. `scripts/unity_experiment.sh`는 ASC Unity batch, CPU=1, memory=4 GiB를 기본으로 사용한다. 환경 설치는 한 번만 `uv sync --locked`로 수행하고 array 내부에서는 이미 설치한 Python을 직접 실행한다. 명령과 경로는 [Unity 실행 안내](unity.md)에 정리한다.
 
 `summarize`는 48개 예상 fit을 기준으로 누락/실패까지 `fits.csv`에 남긴다. 공통 β·20개 θ·32개 예측확률의 R-hat/ESS/MCSE, ESS/sec의 하위 10%·중앙값, 차수별 및 active/inactive θ RMSE, 32개 패턴의 probability RMSE·expected log loss/Brier risk를 기록한다. Undefined 지표는 빈 값으로 남기고 개수를 함께 표시한다. Sampling 시간에는 초기화·burn-in·draw 수집을 포함하며 최종 진단·저장 시간은 별도 기록한다.
 
@@ -684,3 +684,5 @@ R-hat·ESS의 초기 기준과 rank/folding 정의는 [Vehtari et al.의 MCMC �
 - 2026-10-07 truncated Gamma 최종 범위 확인: 사용자가 구체적인 예시로 기존 inverse-CDF 계산은 유지하고 fallback 블록만 제거하도록 명시했다. 해당 함수의 rejection 경로만 제거하고 기존 support 검사를 유지했다. Ordinary/zero/tiny-positive-rate의 독립 CDF 검증은 유지하고 underflow fixture는 오류 검증으로 변경했다. 의존성·CLI·다른 distribution은 변경하지 않았다. 최신 검증 결과는 docs/validation.md에 기록한다.
 
 - 2026-10-08 Unity 실험 준비: 사용자가 signal을 (1,1,1),(1,2,2),(1,3,3)으로 변경하고 pilot/long-run만 요청했다. ASC Unity batch 사용을 확인했다. 13개 DGP 생성·분리 저장, 39개 pilot 및 같은 데이터의 9개 long-run, 단순 Slurm array 스크립트, 실패 포함 효율·정확도 CSV를 준비했다. 원격 제출과 실제 pilot/long-run의 수행 여부는 docs/validation.md의 최신 기록을 따른다.
+
+- 2026-10-08 GitHub 전송 범위: 사용자 요청으로 data/pilot-long-run-20261008/의 29개 준비 파일을 .gitignore 예외에 포함했다. 코드·설정·uv.lock과 함께 commit/push하면 Unity에서 동일한 관측 데이터와 고정 설정을 받을 수 있다. Clone 후 같은 경로에서 prepare를 다시 실행하지 않도록 안내를 갱신했다.
