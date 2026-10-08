@@ -57,8 +57,10 @@ docs/                  implementation plan and validation record
 Archive/               existing local historical files, excluded from Git
 ```
 
-Local environments, data and generated results are excluded by `.gitignore`. `Archive/` is
-preserved locally. The GitHub workflow installs locked dependencies and runs lint and tests.
+Local environments, other data and generated results are excluded by `.gitignore`.
+The prepared `data/pilot-long-run-20261008/` dataset is explicitly included for transfer
+through GitHub to Unity. `Archive/` is preserved locally. The GitHub workflow installs
+locked dependencies and runs lint and tests.
 Set the remote URL to an existing GitHub repository when connecting this checkout; local
 setup does not create or publish a remote repository.
 
@@ -72,10 +74,9 @@ The initial experiment uses signals `(1,1,1)`, `(1,2,2)`, `(1,3,3)`: 13 datasets
 39 pilot fits and 9 long-run fits on three shared representative datasets. Each fit runs
 four sequential CPU chains. Prepared observations and truth are stored separately.
 
-```sh
-uv run --locked python -m factorregression.experiment prepare \
-  --output data/pilot-long-run-20261008
-```
+Commit the prepared `data/pilot-long-run-20261008/` files with the source and clone/pull
+them on Unity. This directory already contains the datasets and frozen settings; the
+server can use it directly. Use a new output directory when preparing another experiment.
 
 See [the Unity run guide](docs/unity.md) for locked Linux setup, ASC `batch` submissions,
 execution checks, and CSV accuracy/efficiency reports. `configs/pilot.json` and

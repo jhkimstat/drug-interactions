@@ -12,7 +12,9 @@ dist/
 
 # Local research inputs, generated results and historical working files
 /Archive/
-/data/
+/data/*
+# Prepared observations, truth and frozen configs for GitHub-to-Unity transfer
+!/data/pilot-long-run-20261008/
 /outputs/
 /results/
 *.rds

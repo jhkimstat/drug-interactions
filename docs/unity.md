@@ -25,9 +25,12 @@ the macOS `.venv`; create a Linux environment from the committed `uv.lock`:
 cd /your/path/FactorRegression
 uv python install 3.13.15
 uv sync --locked
-uv run --locked python -m factorregression.experiment prepare \
-  --output data/pilot-long-run-20261008
 ```
+
+`data/pilot-long-run-20261008/` is included in Git through an explicit ignore exception.
+After committing and pushing these prepared files, cloning/pulling the repository on Unity
+provides all 13 datasets, the manifest and frozen stage settings. Use this directory directly;
+running `prepare` again at the same path will fail because it already exists.
 
 Use the [official uv installation instructions](https://docs.astral.sh/uv/getting-started/installation/)
 if needed. A compiler may be needed if polyagamma is built from source; use the compiler
@@ -42,8 +45,17 @@ The manifest records task IDs and seeds. Fitting never opens truth.npz; evaluati
 Existing prepared directories are rejected. Configuration changes require a new preparation
 directory; changing a source config after preparation does not affect the frozen experiment.
 
-The data can also be prepared locally and copied as a whole; do not regenerate a second
-dataset specifically for long-run. Task IDs are dataset-major, method-minor in the order
+To prepare a new experiment, use a new directory:
+
+```bash
+uv run --locked python -m factorregression.experiment prepare \
+  --output data/pilot-long-run-new
+```
+
+Additional data directories are ignored by default; add a specific ignore exception if
+they also need to be transferred through GitHub. Set `prepared` below to the directory used
+for that experiment. Do not regenerate a second dataset specifically for long-run.
+Task IDs are dataset-major, method-minor in the order
 normal, horseshoe, ssp_reference. The manifest is the definitive mapping.
 
 ## 2. Check on a compute node
