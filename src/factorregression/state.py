@@ -6,6 +6,7 @@ from types import MappingProxyType
 from typing import Literal
 
 import numpy as np
+from scipy.special import logit
 
 from .model import FloatArray, predictor
 
@@ -131,7 +132,7 @@ def initialize(data: Data, spec: ModelSpec, method: Method, rng, chain: int = 0)
         raise ValueError(f"method must be one of {METHODS}")
     sd = 0.1 * (0.5, 1.0, 2.0, 4.0)[chain % 4]
     beta = rng.normal(0, sd, spec.p + 1)
-    beta[0] += np.log((data.y.sum() + 0.5) / (len(data.y) - data.y.sum() + 0.5))
+    beta[0] += logit((data.y.sum() + 0.5) / (len(data.y) + 1))
     V = {d: rng.normal(0, sd, (spec.p, r)) for d, r in spec.ranks.items()}
     common = (
         beta,

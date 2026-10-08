@@ -1,7 +1,8 @@
 import numpy as np
+from scipy.stats import invgamma
 
 from ..conditionals import beta_parameters, draw_precision_normal, variance_parameters
-from ..distributions import inverse_gamma, polya_gamma
+from ..distributions import polya_gamma, positive_finite
 from ..model import update_symmetric_coefficients
 
 
@@ -15,7 +16,9 @@ def update_common(data, spec, state, rng):
     state.eta = data.X_tilde @ state.beta + r
     state.context = "sigma_beta2"
     a, b = variance_parameters(state.beta, spec.prior.a_beta, spec.prior.b_beta)
-    state.sigma_beta2 = float(inverse_gamma(a, b, rng))
+    state.sigma_beta2 = float(
+        positive_finite(invgamma.rvs(a, scale=b, random_state=rng), "sigma_beta2")
+    )
 
 
 def update_loading(data, state, v, j, h, variance, rng, polynomial=None):

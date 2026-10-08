@@ -8,7 +8,7 @@ from scipy.stats import halfcauchy, norm
 
 from factorregression import model
 from factorregression.model import predictor_reference
-from factorregression.samplers import horseshoe, normal, ssp_reference
+from factorregression.samplers import common, horseshoe, normal, ssp_reference
 from factorregression.state import Data, ModelSpec, initialize, validate_state
 
 
@@ -107,18 +107,14 @@ def test_ssp_indicator_scan_matches_independent_joint(problem):
 
 class RecordingRNG:
     def __init__(self):
-        self.betas, self.gammas = [], []
+        self.betas = []
 
     def beta(self, a, b):
         self.betas.append((a, b))
         return 0.5
 
-    def gamma(self, a, size=None):
-        self.gammas.append(a)
-        return 1.0
 
-
-def test_ssp_hyperparameters_include_inactive_indicators_and_slabs(problem):
+def test_ssp_hyperparameters_include_inactive_indicators_and_slabs(problem, monkeypatch):
     data, spec = problem
     state = initialize(data, spec, "ssp_reference", np.random.default_rng(85), 0)
     for d, rank in spec.ranks.items():
@@ -126,23 +122,59 @@ def test_ssp_hyperparameters_include_inactive_indicators_and_slabs(problem):
         state.gamma[d][:] = np.arange(spec.p * rank).reshape(spec.p, rank) % 2
         state.tilde_v[d][:] = np.arange(spec.p * rank).reshape(spec.p, rank) + 1
     recorder = RecordingRNG()
+    variance_calls = []
+
+    def record_variance(a, *, scale, random_state):
+        variance_calls.append((a, scale, random_state))
+        return scale
+
+    monkeypatch.setattr(ssp_reference.invgamma, "rvs", record_variance)
     ssp_reference.update_hyperparameters(spec, state, recorder)
     for index, (d, rank) in enumerate(spec.ranks.items()):
         count = state.gamma[d].sum()
         assert recorder.betas[2 * index] == (1 + count, 1 + spec.p * rank - count)
         assert recorder.betas[2 * index + 1] == (1, 1 + rank)
-        assert recorder.gammas[index] == 4 + spec.p * rank / 2
+        assert variance_calls[index][0] == 4 + spec.p * rank / 2
+        assert variance_calls[index][2] is recorder
         assert state.sigma_v2[d] == 1 + 0.5 * np.sum(state.tilde_v[d] ** 2)
 
 
-def test_normal_variance_uses_every_loading(problem):
+def test_normal_variance_uses_every_loading(problem, monkeypatch):
     data, spec = problem
     state = initialize(data, spec, "normal", np.random.default_rng(21))
-    recorder = RecordingRNG()
-    normal.update_variances(spec, state, recorder)
+    rng = np.random.default_rng(87)
+    variance_calls = []
+
+    def record_variance(a, *, scale, random_state):
+        variance_calls.append((a, scale, random_state))
+        return scale
+
+    monkeypatch.setattr(normal.invgamma, "rvs", record_variance)
+    normal.update_variances(spec, state, rng)
     for index, d in enumerate(spec.ranks):
-        assert recorder.gammas[index] == 4 + state.V[d].size / 2
+        assert variance_calls[index][0] == 4 + state.V[d].size / 2
+        assert variance_calls[index][2] is rng
         assert state.sigma_v2[d] == 1 + 0.5 * np.sum(state.V[d] ** 2)
+
+
+def test_common_variance_passes_shape_scale_and_rng_to_scipy(problem, monkeypatch):
+    data, spec = problem
+    rng = np.random.default_rng(44)
+    state = initialize(data, spec, "normal", rng)
+    calls = []
+
+    def record_variance(a, *, scale, random_state):
+        calls.append((a, scale, random_state))
+        return scale
+
+    monkeypatch.setattr(common.invgamma, "rvs", record_variance)
+    common.update_common(data, spec, state, rng)
+    assert len(calls) == 1
+    assert calls[0][0] == spec.prior.a_beta + (spec.p + 1) / 2
+    assert calls[0][2] is rng
+    assert_allclose(
+        calls[0][1], spec.prior.b_beta + 0.5 * np.dot(state.beta, state.beta), atol=1e-8, rtol=1e-6
+    )
 
 
 def test_inactive_slabs_are_prior_draws_without_predictor_change():

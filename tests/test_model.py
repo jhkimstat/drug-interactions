@@ -3,6 +3,8 @@ from itertools import combinations, product
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose
+from scipy.special import expit
+from scipy.stats import bernoulli
 
 from factorregression.conditionals import loading_parameters
 from factorregression.model import (
@@ -10,6 +12,7 @@ from factorregression.model import (
     elementary_symmetric,
     elementary_symmetric_coefficients,
     loading_slope,
+    log_likelihood,
     predictor,
     predictor_reference,
     update_symmetric_coefficients,
@@ -106,6 +109,20 @@ def test_zero_and_degree_boundaries():
     assert_allclose(elementary_symmetric(a, 6), 0)
     X = np.array(list(product((0, 1), repeat=5)), dtype=float)
     assert_allclose(predictor(X, np.zeros(6), {3: np.zeros((5, 2))}), 0)
+
+
+def test_log_likelihood_matches_library_bernoulli_for_regular_logits():
+    rng = np.random.default_rng(56)
+    eta = rng.normal(size=32)
+    y = rng.binomial(1, 0.5, 32)
+    assert_allclose(
+        log_likelihood(y, eta), bernoulli.logpmf(y, expit(eta)).sum(), atol=1e-8, rtol=1e-6
+    )
+
+
+def test_log_likelihood_remains_finite_for_extreme_logits():
+    eta = np.array([1000.0, -1000.0, 1000.0, -1000.0])
+    assert log_likelihood(np.array([1, 0, 0, 1]), eta) == -2000.0
 
 
 @pytest.mark.parametrize(

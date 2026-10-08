@@ -1,8 +1,7 @@
 """Marginal posterior log density with the PG variables integrated out."""
 
 import numpy as np
-from scipy.special import xlog1py, xlogy
-from scipy.stats import beta, halfcauchy, invgamma, norm
+from scipy.stats import bernoulli, beta, halfcauchy, invgamma, norm
 
 from .model import log_likelihood
 from .state import HorseshoeState, SSPState
@@ -27,7 +26,7 @@ def log_prior(spec, state):
                 (state.gamma[d], state.pi_gamma[d], p.a_gamma, p.b_gamma),
                 (state.z[d], state.pi_z[d], p.a_z, p.b_z),
             ]:
-                value += (xlogy(bits, pi) + xlog1py(1 - bits.astype(int), -pi)).sum()
+                value += bernoulli.logpmf(bits, pi).sum()
                 value += beta.logpdf(pi, a, b)
     return float(value)
 

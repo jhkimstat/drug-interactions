@@ -65,3 +65,19 @@ setup does not create or publish a remote repository.
 The detailed specification and provisional defaults are in
 [the implementation plan](docs/implementation-plan.md). Numerical and sampling validation
 results are recorded in [the validation document](docs/validation.md).
+
+## Unity pilot and long-run
+
+The initial experiment uses signals `(1,1,1)`, `(1,2,2)`, `(1,3,3)`: 13 datasets at n=200,
+39 pilot fits and 9 long-run fits on three shared representative datasets. Each fit runs
+four sequential CPU chains. Prepared observations and truth are stored separately.
+
+```sh
+uv run --locked python -m factorregression.experiment prepare \
+  --output data/pilot-long-run-20261008
+```
+
+See [the Unity run guide](docs/unity.md) for locked Linux setup, ASC `batch` submissions,
+execution checks, and CSV accuracy/efficiency reports. `configs/pilot.json` and
+`configs/long-run.json` are editable starting settings; preparation freezes copies for each
+experiment. No remote jobs are submitted automatically.

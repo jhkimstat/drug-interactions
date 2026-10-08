@@ -18,16 +18,14 @@ def update_loadings(data, spec, state, rng):
 
 
 def update_local_scales(spec, state, rng):
-    for d, rank in spec.ranks.items():
-        for k in range(rank):
-            for j in range(spec.p):
-                state.context = f"lambda[{d},{j},{k}]"
-                xi = state.lambda_[d][j, k] ** -2
-                u = open_uniform(rng) / (1 + xi)
-                upper = (1 - u) / u
-                rate = 0.5 * (state.V[d][j, k] / state.tau[d][k]) ** 2
-                xi = truncated_exponential(rate, upper, rng)
-                state.lambda_[d][j, k] = positive_finite(xi**-0.5, "lambda")
+    for d in spec.ranks:
+        state.context = f"lambda[{d},:,:]"
+        xi = state.lambda_[d] ** -2
+        u = open_uniform(rng, size=xi.shape) / (1 + xi)
+        upper = (1 - u) / u
+        rate = 0.5 * (state.V[d] / state.tau[d]) ** 2
+        xi = truncated_exponential(rate, upper, rng)
+        state.lambda_[d] = positive_finite(xi**-0.5, "lambda")
 
 
 def update_component_scales(spec, state, rng):

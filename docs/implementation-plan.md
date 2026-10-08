@@ -47,6 +47,10 @@ Normal baseline의 첨부 노트는 `/Users/jaehoonkim/Library/Mobile Documents/
 
 **사용자 확정 수치 목표 (2026-10-07):** Machine-precision agreement는 목표가 아니다. Posterior inference·sampler behavior에 비해 오차가 무시할 만하면 더 단순하고 빠른 구현을 우선한다. Full polynomial의 제외 recurrence 및 ordinary floating-point cancellation을 허용하며, 고정밀 일치를 위한 매 좌표 재계산은 사용하지 않는다. Invalid draw·유의미한 predictor drift에 대한 검사는 유지한다.
 
+**사용자 확정 library 우선 원칙 (2026-10-07):** NumPy/SciPy/기존 의존성이 동등한 기능을 제공하면 해당 well-tested 함수를 우선한다. Custom implementation은 API 누락·검증된 수치 실패·측정된 계산상 이점이 있는 경우만 유지하며 이유를 기록한다. Inverse-Gamma는 custom reciprocal-Gamma sampler/wrapper를 제거하고 SciPy invgamma.rvs(a,scale=b,random_state=rng)를 직접 사용한다.
+
+**사용자 확정 truncated Gamma 정책 (2026-10-07):** 사용자가 제시한 예시대로 `truncated_gamma(shape,rate,upper,rng)` wrapper와 SciPy `gammainc`/`gammaincinv` inverse-CDF 계산을 유지하고 rejection fallback 블록만 제거한다. Rate=0은 기존 `upper*rng.power(shape)`를 사용한다. Underflow 등으로 생기는 비양수·nonfinite draw는 기존 `positive_finite()` 검사에서 오류로 보고하며 upper-bound 검사도 유지한다.
+
 이전 프로젝트의 NUTS/MALA, GP, whitening 등은 가져오지 않는 방향을 제안한다. 프로젝트용 AGENTS.md에 현재 범위·notation·검증·연구 코드 원칙을 기록했다. BayesianCalibration의 지침은 참고 자료이며 이 프로젝트의 NumPy/SciPy 결정을 대체하지 않는다.
 
 ## 3. 공통 모델 명세
@@ -290,7 +294,7 @@ R_d를 늘리는 실험과 p를 늘리는 실험을 구분하고, 각각 active 
 
 조건부분포를 노트의 prior로부터 다시 유도하여 power/Jacobian과 shape–rate 계약을 확인한다. 인덱스는 Sampling - Horshoe.md의 `jk`, `k`, 차수 `d`를 따른다.
 
-수치 경계: local rate가 정확히 0이면 conditional은 `(0,L)`의 uniform이다. component rate가 0이면 normalized density가 `zeta^(a-1)`에 비례하여 `L*U^(1/a)`로 생성할 수 있다. 0 rate를 임의의 작은 양수로 치환하지 않는다. 양수 rate의 작은 CDF, 극단적인 bound, overflow/underflow에 대한 안정적인 truncated sampler를 정하고 독립 CDF 기준으로 검증한다. 우선 표준 함수로 구현 가능성을 확인하고, 실패 구간에만 정당화된 대안을 추가한다. slice 방법을 inverse-Gamma auxiliary representation으로 바꾸는 것은 이번 기본안에 포함하지 않는다.
+수치 경계: local rate가 정확히 0이면 conditional은 `(0,L)`의 uniform이다. component rate가 0이면 normalized density가 `zeta^(a-1)`에 비례하여 `L*rng.power(a)`로 생성한다. 0 rate를 임의의 작은 양수로 치환하지 않는다. 양수 rate의 truncated Gamma는 기존 inverse-CDF 경로만 사용하며 rejection fallback은 제거한다. 독립 적분 CDF 검증을 유지하고 invalid draw는 기존 support 검사로 보고하여 numerical_failure로 기록한다. slice 방법을 inverse-Gamma auxiliary representation으로 바꾸는 것은 이번 기본안에 포함하지 않는다.
 
 초기값을 모든 loading=0으로 두면 고차 상호작용 좌표의 `h`가 처음에는 0이 된다. 체인이 영구 고정되는 것은 아니지만 시작 혼합에 불리할 수 있으므로 유한한 비영 초기값과 여러 초기 상태를 검토한다. 초기화에만 쓰는 제한과 prior의 truncation은 구분한다.
 
@@ -343,7 +347,7 @@ Binary interaction coefficient는 지정한 logit 척도의 계수이다. 확률
 
 ### 7.1 원문에서 정해진 내용
 
-`p=5`, `X_ij iid Bernoulli(0.5)`, `beta0 ~ Uniform(-1,1)`. 절편을 제외한 main effects와 활성 interaction coefficients는 `Uniform(0.5,1.5)` 크기 및 독립 Rademacher 부호를 생성한 뒤 차수별 L2 norm으로 정규화한다. 신호 설정은 `(tau1,tau2,tau3)=(1,1,1),(1,1.5,1.5),(1,2,2)`이다.
+`p=5`, `X_ij iid Bernoulli(0.5)`, `beta0 ~ Uniform(-1,1)`. 절편을 제외한 main effects와 활성 interaction coefficients는 `Uniform(0.5,1.5)` 크기 및 독립 Rademacher 부호를 생성한 뒤 차수별 L2 norm으로 정규화한다. 원문의 신호 설정은 `(1,1,1),(1,1.5,1.5),(1,2,2)`였으나, **사용자 결정 (2026-10-08)에 따라 실제 실험은 `(tau1,tau2,tau3)=(1,1,1),(1,2,2),(1,3,3)`을 사용한다.** 외부 노트 파일은 수정하지 않는다.
 
 | 구조 | S2 | S3 |
 | --- | --- | --- |
@@ -389,7 +393,7 @@ Pilot 실행에 필요한 n·replication·rank·prior·chain/burn-in/draw 수는
 
 ### 7.4 Pilot 규모와 계산 예산 — 변경 가능한 제안 default
 
-현재는 설정을 제안하며 pilot을 실행하지 않는다. 실행 시 P1–P6의 sampler 검증 뒤 짧은 smoke run으로 처리량을 먼저 측정한다. 다음 값은 혼합·실패·시간·메모리를 조사하기 위한 잠정값이며, 검정력·coverage·모형 간 우열을 평가하는 본 실험 설정이 아니다.
+사용자 요청 (2026-10-08)에 따라 pilot과 long-run을 ASC Unity의 batch partition에서 실행할 수 있도록 준비한다. P1–P6 검증 뒤 compute-node 실행 check로 환경·처리량을 확인한다. 이번 단계에는 반복 데이터셋 실험·SBC·prior/rank sensitivity를 포함하지 않는다. 다음 값은 혼합·실패·시간·메모리를 조사하기 위한 잠정값이며, 검정력·coverage·모형 간 우열을 평가하는 본 실험 설정이 아니다.
 
 | 항목 | 제안 default | 간단한 근거 |
 | --- | --- | --- |
@@ -400,17 +404,17 @@ Pilot 실행에 필요한 n·replication·rank·prior·chain/burn-in/draw 수는
 | 대상 sampler | Normal, Horseshoe, Reference SSP | 현재 개발 범위에 한정한 3개 fitting 경로 |
 | 체인·sweep 수 | 4 chains; chain당 burn-in 2,000 + retained 2,000 | 서로 다른 초기값의 체인 비교와 ESS 조사용 시작 예산. 충분한 혼합을 보장하는 반복 수가 아님 |
 | Thinning | 1 | 생성한 post-burn-in draw를 모두 보존하고 자기상관은 ESS/MCSE로 다룸 |
-| Root seed | 20261006 | 명시적 재현 시작점. DGP·replication·truth·X/y·method·chain별 독립 stream을 파생 |
-| 실행 순서 | CPU에서 chain을 순차 실행 | 첫 기준 구현의 메모리·시간 측정을 단순하게 유지. 병렬 실행 인프라는 현재 범위 밖 |
-| 시간 상한 | dataset×method의 4-chain fit당 45분, pilot 전체 6시간 | 실측 예산이 없는 현재 단계의 제안 한도. 완료 예상시간이 아니며, 한도 초과 시 미완료를 기록하고 후속 예산을 변경 |
+| Root seed | 생성/pilot 20261008, long-run 20261009 | DGP·truth·X/y·stage·method·chain별 독립 stream. 준비 manifest에 실제 fit seed 저장 |
+| 실행 순서 | Slurm array의 fit마다 CPU 1개, 4 chains 순차 실행 | 독립 fit을 최대 3개 동시 실행하는 단순 제출 스크립트. BLAS/OpenMP thread=1 |
+| 시간 상한 | pilot fit당 Python 45분/Slurm 1시간; long-run Python 3시간/Slurm 4시간 | 진단·저장 시간을 위한 여유 포함. Array 전체 6시간 상한은 적용하지 않으며 실제 fit별 시간·완료 상태를 기록 |
 
 13×1×3×4×4,000 = **624,000 complete sweeps**가 full pilot의 요청량이다. 시간 상한을 넘으면 이를 모두 수행한 것으로 보고하지 않는다. 실제 실행에서는 완료한 dataset·method·chain, sweep 수, elapsed time과 미실행 목록을 기록한다. 시간 확인은 각 complete sweep 이후에 하며, 가장 오래 걸리는 한 sweep 때문에 상한을 소폭 넘을 수 있다.
 
-Smoke default는 n=64,p=5,D=3,R_2=R_3=5, 4 chains, burn-in 100 + retained 100이다. No-interaction, sparse 3-way·dense 3-way의 강한 signal (1,2,2) 사례를 각각 1개 사용해 3 samplers를 실행한다. 총 7,200 sweeps이며, smoke는 실행·캐시·출력 경로와 대략의 비용 점검용이다. Smoke에 본 pilot의 R-hat/ESS 기준 충족을 요구하거나 posterior 검증 완료를 선언하지 않는다.
+Smoke default는 n=64,p=5,D=3,R_2=R_3=5, 4 chains, burn-in 100 + retained 100이다. No-interaction, sparse 3-way·dense 3-way의 signal (1,2,2) 사례를 각각 1개 사용해 3 samplers를 실행한다. 총 7,200 sweeps이며, smoke는 실행·캐시·출력 경로와 대략의 비용 점검용이다. Smoke에 본 pilot의 R-hat/ESS 기준 충족을 요구하거나 posterior 검증 완료를 선언하지 않는다.
 
 Truth는 DGP·replication마다 새로 생성하고 그 데이터셋의 X,y는 세 sampler가 공유한다. Fitting D와 ranks는 모든 DGP에 동일하게 적용하여 구조 label로 실제 interaction 차수를 전달하지 않는다. Truth seed와 X/y seed를 분리하고, 두 객체의 seed·설정은 평가용 결과에 보존하되 fitting 입력에는 관측 X,y와 model/sampler 설정만 제공한다.
 
-진단이 부족한 fit은 `mixing_flagged`로 기록한다. 후속 실행의 제안은 같은 데이터·prior·rank에서 4 chains, burn-in 4,000 + retained 8,000으로 독립 재실행하는 것이다. 자동 연장·무제한 재시도·checkpoint 재시작은 두지 않는다. 재실행이 필요하면 예산과 설정을 명시적으로 변경하고 첫 실행 결과도 보존한다.
+진단이 부족한 fit은 `mixing_flagged`로 기록한다. 이번 long-run은 아래 §7.6의 고정된 3개 데이터셋에 대해 같은 prior·rank와 독립 seed로 실행한다. 자동 연장·무제한 재시도·checkpoint 재시작은 두지 않는다. 재실행은 새 결과 경로에서 수행하여 첫 실행 결과도 보존한다.
 
 ### 7.5 Pilot prior 수치와 sensitivity — 변경 가능한 제안 default
 
@@ -429,6 +433,16 @@ Normal에서 E[(σ_v²)^2]=E[(σ_v²)^3]=1/6이므로 R_d=5일 때 각 2·3차 c
 실행 전 prior predictive default는 모형별 독립 prior draw 500개, p=5의 32개 노출 패턴이다. β·분산·loading·indicator·scale을 **joint prior**에서 생성하고 η와 예측확률의 median·5/95% 분위수 및 예측확률 <0.01 또는 >0.99의 비율을 기록한다. Heavy tail의 평균·분산 추정만으로 규모를 맞추지 않는다. 이 점검을 통해 나타난 prior 차이를 기록하고, prior 값을 바꾸면 이후 pilot에 쓰인 값을 별도 설정으로 보존한다.
 
 추가 sensitivity의 시작 후보는 별도 선택된 작은 DGP 집합에서 (i) 공통 fitting rank R_2=R_3∈{3,10}, (ii) Normal·SSP의 a_v=4를 고정하고 b_v∈{0.5,2}, (iii) SSP의 γ 또는 z hyperprior만 하나씩 Beta(1,3)으로 바꾸는 것이다. 전체 Cartesian product를 default로 실행하지 않고 처리량·진단과 남은 예산을 보고 후보를 선택한다. Horseshoe half-Cauchy scale을 변경하는 비교는 별도 모델 결정으로 남긴다.
+
+### 7.6 Unity pilot/long-run 실행 준비 — 2026-10-08
+
+현재 범위는 13개 DGP×1 dataset×3 methods의 pilot(39 fits)과, no-interaction·sparse-3way-s3·dense-3way-s3의 동일 데이터에 대한 long-run(9 fits)이다. Long-run은 4 chains, burn-in 4,000+retained 20,000으로 총 864,000 sweeps를 요청한다. 두 단계 합계는 1,488,000 sweeps이며, 완료 또는 수렴을 미리 주장하지 않는다. 반복 데이터셋 실험과 본 실험은 후속 범위다.
+
+`simulation.py`는 note support·차수별 norm·빈 support를 구현한다. `python -m factorregression.experiment prepare`가 n=200의 13개 observations/truth 파일과 설정 사본·task manifest를 저장한다. `run`은 observations와 model/sampling 설정만 읽고, 각 fit의 4개 chain을 순차 실행한다. `scripts/unity_experiment.sh`는 ASC Unity batch, CPU=1, memory=4 GiB를 기본으로 사용한다. 환경 설치는 한 번만 `uv sync --locked`로 수행하고 array 내부에서는 이미 설치한 Python을 직접 실행한다. 명령과 경로는 [Unity 실행 안내](unity.md)에 정리한다.
+
+`summarize`는 48개 예상 fit을 기준으로 누락/실패까지 `fits.csv`에 남긴다. 공통 β·20개 θ·32개 예측확률의 R-hat/ESS/MCSE, ESS/sec의 하위 10%·중앙값, 차수별 및 active/inactive θ RMSE, 32개 패턴의 probability RMSE·expected log loss/Brier risk를 기록한다. Undefined 지표는 빈 값으로 남기고 개수를 함께 표시한다. Sampling 시간에는 초기화·burn-in·draw 수집을 포함하며 최종 진단·저장 시간은 별도 기록한다.
+
+`pilot-vs-long-run.csv`는 동일 dataset·method·prior·rank를 확인한 후 평균/분위수 차이와 결합 MCSE를 기록한다. Long-run의 `diagnostics_ok`와 관심량별 MCSE(long)≤MCSE(pilot)/3을 만족할 때만 `reference_qualified`로 표시한다. Pilot 진단은 별도 열에 남긴다. 이는 긴 실행을 정확한 posterior oracle로 선언하는 기준이 아니며, flagged run의 표준화 차이를 정식 정확도 검정으로 해석하지 않는다. 한 DGP당 하나의 truth에 대한 RMSE는 추정/prior/rank 표현 효과를 포함하고, 반복 coverage나 sampler correctness를 대신하지 않는다.
 
 ## 8. 구현 환경 및 모듈 구조 제안
 
@@ -493,7 +507,7 @@ float64, 안정적인 sigmoid/logaddexp/log1p/expm1과 Cholesky solve를 사용�
 | 대상 | 제안 default | 간단한 근거 |
 | --- | --- | --- |
 | Chain별 loading·β jitter 크기 | c=(0.5,1,2,4), s_init=0.1c | 작은 비영 값부터 서로 다른 크기로 시작해 초기값 의존성을 살펴보고 큰 product의 시작 overflow를 줄임. s_init은 계산용 초기 SD이며 prior 변수와 구별 |
-| β_0 | log((Σy+0.5)/(n−Σy+0.5)) + N(0,s_init²) | 관측 반응의 smoothed log odds로 극단적인 초기 logit을 줄임. 모든 y가 0/1이어도 유한 |
+| β_0 | scipy.special.logit((Σy+0.5)/(n+1)) + N(0,s_init²) | 관측 반응의 smoothed log odds로 극단적인 초기 logit을 줄임. 모든 y가 0/1이어도 유한 |
 | β_j, j≥1 | 독립 N(0,s_init²) | 주효과에 truth를 주입하지 않고 chain별 작은 차이를 제공 |
 | σ_beta² | b_beta/(a_beta+1) | IG prior의 유한한 mode로 시작. Pilot 제안값에서는 0.5 |
 | Normal V 및 SSP의 모든 tilde_v | 독립 N(0,s_init²) | 연속 loading을 모두 0으로 시작하는 고차 좌표의 초기 퇴화를 피하고 inactive slab도 상태에 유지 |
@@ -507,7 +521,7 @@ float64, 안정적인 sigmoid/logaddexp/log1p/expm1과 Cholesky solve를 사용�
 
 4개를 넘는 chain은 위 4개 시작 유형을 순환하되 독립 RNG draw를 사용한다. 사용자가 initial state를 제공하면 shape·값·양수 scale을 검사하고 제공된 값을 기록한다. 유효하지 않은 초기값을 clipping/floor로 수정하지 않는다.
 
-Scan은 노트의 sweep 순서와 각 단계 내부의 오름차순 d→k→j로 고정한다. Reference SSP는 전체 z 단계→전체 γ 단계→전체 slab 단계→차수별 π_gamma,π_z,σ_v² 갱신으로 둔다. PG는 sweep의 첫 단계에서 한 번 갱신하고 이후 고정한다. Burn-in 동안 별도의 prior tuning이나 adaptive kernel 변경은 하지 않는다.
+Scan은 노트의 sweep 순서와 각 단계 내부의 오름차순 d→k→j로 고정한다. Reference SSP는 전체 z 단계→전체 γ 단계→전체 slab 단계→차수별 π_gamma,π_z,σ_v² 갱신으로 둔다. Horseshoe의 local scale은 현재 V,τ에 조건부 독립이므로 차수별 array로 갱신하고 component τ는 새 local scale을 사용한다. PG는 sweep의 첫 단계에서 한 번 갱신하고 이후 고정한다. Burn-in 동안 별도의 prior tuning이나 adaptive kernel 변경은 하지 않는다.
 
 ### 9.2 표본 저장과 출력 — 변경 가능한 제안 default
 
@@ -553,7 +567,7 @@ Marginal log posterior는 현재 유지된 η의 Bernoulli log likelihood와 **�
 | P5 — 작은 참조 범위 검증 완료 | posterior end-to-end 검증 | main-only 작은 logistic posterior를 quadrature와 비교; 작은 interaction 모델의 독립 계산/참조 MCMC와 식별 가능한 functional 비교; posterior invariance와 mixing을 구분 |
 | P6 — 기준 구현·검증 완료 | Sampling loop·저장·diagnostics | 명시적 seed와 설정, 초기화·burn-in·retained draw 구분, 표본 저장, rank-normalized R-hat·bulk/tail ESS·MCSE, binary-state 고정 및 chain 불일치 표시. theta·eta 등 검증용 계산 유지 |
 | P6a — 보류 | 추론 및 효과 요약 | 구조 PIP, sign mass, quantile/conditional summary 및 선택 규칙은 후속 논의·구현 |
-| P7 — 후속 | 13개 DGP 및 소규모 pilot | 중복 제거·support·norm·빈 support·독립 seed 확인; 모든 fitting 경로에 true support가 전달되지 않음을 확인; 명시된 잠정 설정으로 13개 DGP의 pilot을 수행하고 correctness·혼합·실패·시간/메모리·prior sensitivity 평가 |
+| P7 — Unity 실행 준비 | 13개 DGP pilot 및 3개 dataset long-run | 생성·truth 분리·고정 설정·task별 실행·비교 CSV 제공. 실제 서버 실행과 충분한 표본의 혼합 평가는 대기; 반복 실험·sensitivity는 후속 |
 | P8 — 후속 | pilot 이후 설정 확정 및 본 실험 | pilot 근거로 n·replication·R_2,R_3·prior hyperparameters·MCMC budget을 결정하고 실행 전 기록; 선택 threshold 등 평가 규칙 확정; 13개 DGP에서 유효 결과와 실패·반복 오차 보고; seed·설정으로 주요 표·그림 재생성 |
 | P9 — recurrence·중복 계산 최적화 검증 완료 | 측정 기반 최적화 | P1 참조 및 posterior 검증 보존; 전체 sweep 시간을 비교하고 병목 개선의 근거 제시 |
 
@@ -582,7 +596,7 @@ P5에서 quadrature가 가능한 차원으로 문제를 제한하며 고차원 p
 
 PG fixture는 η∈{0,±1,±5,±20,±100}의 `PG(1,η)`에 대해 양수·finite support, 부호대칭, 알려진 mean/variance 및 별도의 density/CDF 참조를 검사한다. η=0의 mean=1/4과 variance=1/24를 포함한다. Sampling library 자체의 CDF와 일치하는 것만으로 PG 검증을 완료하지 않는다. [Polson, Scott, Windle의 PG 논문](https://arxiv.org/abs/1205.0310)의 분석식을 기준으로 독립 계산을 남긴다.
 
-Horseshoe는 u를 고정한 truncated conditional sampler를 IID 검증 대상으로 삼는다. Rate=0의 Uniform 또는 bounded power 분포, 양수 rate의 작은/큰 rate×bound, Gamma의 작은 truncation mass를 포함한다. Slice sweep에서 연속으로 갱신된 scale draw는 IID라고 가정하지 않는다. SSP는 z=0의 γ prior draw, inactive slab의 prior draw와 **전체** indicator/slab count를 독립적으로 확인한다.
+Horseshoe는 u를 고정한 truncated conditional sampler를 IID 검증 대상으로 삼는다. Rate=0의 Uniform 또는 bounded power 분포와 양수 rate의 작은/큰 rate×bound를 포함한다. Truncated Gamma의 rate=0,2,1e−12 세 fixture는 case당 50,000 draws로 독립 적분 CDF와 비교한다. shape=1000,upper=1,rate=1 또는 0.01에서는 underflow로 생기는 0 draw가 기존 support 검사에서 오류를 내는지 확인한다. 검증 tolerance는 바꾸지 않는다. Slice sweep에서 연속으로 갱신된 scale draw는 IID라고 가정하지 않는다. SSP는 z=0의 γ prior draw, inactive slab의 prior draw와 **전체** indicator/slab count를 독립적으로 확인한다.
 
 End-to-end 기준 문제의 기본안은 관측 X=0의 작은 main-only logistic fixture에서 σ_beta²와 정보 없는 β_j를 적분한 intercept posterior의 1차원 quadrature 비교, 그리고 β·σ_v²를 고정한 작은 Normal 2-way loading block의 2차원 quadrature 비교이다. 후자는 nuisance 고정 상태의 conditional kernel 검증임을 명시한다. 이를 p=5,D=3의 full-sweep joint-ratio·캐시·다중-chain 검증과 함께 사용하고, 고차원 posterior 전체를 quadrature로 계산한다고 주장하지 않는다.
 
@@ -632,11 +646,12 @@ R-hat·ESS의 초기 기준과 rank/folding 정의는 [Vehtari et al.의 MCMC �
 | U06 | 참고 노트 및 notation | 사용자 확정 (2026-10-06): 지정한 여덟 노트 참고, notation은 노트 기준. SSP gamma·pi_gamma, 차수별 sigma_v2 및 IG 표기로 통일 |
 | U07 | 현재 개발 범위 | 사용자 확정 (2026-10-06): 공통·Normal·Horseshoe·Reference SSP Sampling 구현·검증을 주 목표로 함. Inference·Scalable SSP 보류. 현재 단계는 P1·P2·P2a·P3·P4a·P5·P6 |
 | U08 | Default 제안 방식 | 사용자 요청 (2026-10-06): 초기화·저장·검증 tolerance/diagnostic·pilot 잠정 수치는 합리적인 default와 근거를 계획에 기록하고 사용자가 변경 가능하게 함. 본 실험 scientific setting으로 간주하지 않음 |
+| U09 | Truncated Gamma 정책 | 사용자 확정 (2026-10-07): 예시대로 기존 wrapper·inverse-CDF 유지, rejection fallback 블록만 제거, 기존 support 검사에서 오류 보고 |
 | Q17 | MCMC 초기화·scan | §9.1에 변경 가능한 제안 default 명시: 관측 데이터 기반 β, 작은 비영 loading, IG mode·half-Cauchy median, SSP의 서로 다른 시작 support, 노트의 고정 scan |
 | Q18 | Draw 저장·실패 정책 | §9.2–9.3에 제안 default 명시: thinning=1, full latent state·NPZ/JSON, ω 기본 제외, 512 MiB draw 예산, 캐시 검사·실패 상태 구분 |
 | Q19 | 검증 tolerance·diagnostics | §10.1–10.2에 제안 default 명시: deterministic atol/rtol, IID N=50,000·MCSE/CDF 기준, R-hat<1.01·bulk/tail ESS≥400 및 정밀도·이동 기록 |
 
-현재 Sampling 범위의 P1–P6 기준 구현과 수치 비용 refactor를 제공했다. 현재 80개 테스트와 lint/format 및 새 9개 smoke fit(7,200 sweeps)이 통과했다. 최초 구현의 locked offline 설치·sdist/wheel 빌드도 기록되어 있다. Smoke의 혼합 진단은 모두 mixing_flagged이며 수렴 또는 scientific accuracy를 주장하지 않는다. Q03/Q08의 Inference와 Q15/Q16의 Scalable SSP는 계속 보류한다. 다음 연구 단계는 P7의 full 13-DGP pilot과 충분한 표본에서의 혼합·비용·prior/rank sensitivity 조사이다. 본 실험 scientific setting은 pilot 이후 결정한다. GitHub 원격 연결·공개·push는 아직 수행하지 않았다.
+현재 Sampling 범위의 P1–P6 기준 구현과 수치 비용 refactor를 제공했다. 현재 103개 테스트와 lint/format이 통과했다. Unity 준비 과정의 새 CLI check 18개 fit(1,800 sweeps)과 앞선 sampler smoke 결과는 docs/validation.md에 기록했다. 최초 구현의 locked offline 설치·sdist/wheel 빌드도 기록되어 있다. Smoke의 혼합 진단은 모두 mixing_flagged이며 수렴 또는 scientific accuracy를 주장하지 않는다. Q03/Q08의 Inference와 Q15/Q16의 Scalable SSP는 계속 보류한다. 현재 P7의 Unity pilot/long-run 실행 준비를 추가했다. 실제 서버 실행과 결과 해석이 다음 단계이며, 반복 실험·prior/rank sensitivity는 이후로 보류한다. 본 실험 scientific setting은 pilot 이후 결정한다. GitHub 원격 연결·공개·push는 아직 수행하지 않았다.
 
 ## 12. 검토 기록
 
@@ -661,3 +676,11 @@ R-hat·ESS의 초기 기준과 rank/folding 정의는 [Vehtari et al.의 MCMC �
 - 같은 날 개발 진행 요청: 사용자가 현재 Sampling 범위의 개발과 GitHub 연동을 고려한 구조, uv.lock 사용 및 BayesianCalibration 참고를 요청했다. Python 3.13.15·uv_build 기준 환경, 자체 uv.lock, src 패키지·세 sampler·CLI·저장·diagnostics·configs·테스트와 GitHub 개발 파일을 구현했다. 전체 68개 테스트 및 lint/format·locked 설치·배포 빌드가 통과했고 9개 smoke fit은 수치 실패 없이 완료했다. 짧은 smoke의 혼합 진단은 모두 mixing_flagged로 보존했다. 로컬 Git을 초기화했으며 Archive·외부 노트는 변경하지 않았다. Full pilot·Inference·Scalable SSP·GitHub remote/push는 후속으로 남겼다.
 
 - 2026-10-07 수치 비용 검토: 사용자가 machine-precision agreement를 목표에서 제외하고 full-polynomial recurrence를 허용했다. 각 component의 coefficient table과 coordinate delta 갱신으로 제외 다항식 재계산을 제거했고, inactive SSP의 독립 prior 갱신을 batch 처리했다. 저장 시 관측 η·likelihood를 재사용하고 전체 state 검사는 주기적/마지막 boundary로 옮겼다. Dense Gaussian의 중복 finite scan·tril copy, truncated exponential의 별도 tiny-rate 계산 경로와 rounding된 upper endpoint의 불필요한 오류를 제거했다. Algebra/cache tolerance는 atol=1e−8,rtol=1e−6으로 기록하고 posterior reference refinement는 0.1 MCSE 기준으로 변경했다. PG 방법·prior·Gibbs target·truncated Gamma underflow fallback은 유지했다. 검증·측정 결과는 docs/validation.md의 새 절에 기록한다.
+
+- 2026-10-07 library 기능 검토: 사용자가 NumPy/SciPy/기존 의존성의 동등한 기능을 우선하도록 요청했다. Custom inverse_gamma를 제거하고 common·Normal·SSP의 variance draw에 scipy.stats.invgamma.rvs(a,scale=b,random_state=rng)를 직접 사용했다. Truncated exponential은 SciPy truncexpon.rvs와 rate-zero NumPy uniform adapter로 대체하고 독립 local-scale draw를 batch 처리했다. Bounded power proposal/zero-rate Gamma는 Generator.power, Bernoulli prior는 bernoulli.logpmf, logit likelihood/초기화는 log_expit/logit으로 위임했다. Truncated Gamma는 SciPy 1.18.1 generic truncate의 tiny-mass cases에서 0 draw를 확인하여 fallback을 유지했고, 기존 precision factor 재사용과 batched partial polynomial도 API gap/측정 근거로 유지했다. 검증·한계·측정은 docs/validation.md에 기록한다.
+
+- 2026-10-07 truncated Gamma 후속 결정: wrapper 유지 상태에서 fallback을 일시적으로 제거했으나, 사용자가 기존 상태 복원을 요청하여 해당 변경을 되돌렸다. 기존 gammainc/gammaincinv inverse-CDF와 exact rejection fallback, 50,000-draw 독립 CDF 검증, 원래 SciPy 요구 버전을 복원했다. Inverse-Gamma·truncated exponential 등 앞선 library 교체는 유지한다. 최신 검증 결과는 docs/validation.md에 기록한다.
+
+- 2026-10-07 truncated Gamma 최종 범위 확인: 사용자가 구체적인 예시로 기존 inverse-CDF 계산은 유지하고 fallback 블록만 제거하도록 명시했다. 해당 함수의 rejection 경로만 제거하고 기존 support 검사를 유지했다. Ordinary/zero/tiny-positive-rate의 독립 CDF 검증은 유지하고 underflow fixture는 오류 검증으로 변경했다. 의존성·CLI·다른 distribution은 변경하지 않았다. 최신 검증 결과는 docs/validation.md에 기록한다.
+
+- 2026-10-08 Unity 실험 준비: 사용자가 signal을 (1,1,1),(1,2,2),(1,3,3)으로 변경하고 pilot/long-run만 요청했다. ASC Unity batch 사용을 확인했다. 13개 DGP 생성·분리 저장, 39개 pilot 및 같은 데이터의 9개 long-run, 단순 Slurm array 스크립트, 실패 포함 효율·정확도 CSV를 준비했다. 원격 제출과 실제 pilot/long-run의 수행 여부는 docs/validation.md의 최신 기록을 따른다.

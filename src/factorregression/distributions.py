@@ -1,30 +1,30 @@
-"""Distribution adapters, including exact slice-kernel boundary cases."""
+"""Library-backed distribution adapters and shared support checks."""
 
 import numpy as np
 from polyagamma import random_polyagamma
 from scipy.special import gammainc, gammaincinv
+from scipy.stats import truncexpon
 
 
 def positive_finite(value, name):
+    """Shared model-support check using NumPy predicates, with failure context."""
     if not np.isfinite(value).all() or not (np.asarray(value) > 0).all():
         raise FloatingPointError(f"{name} must be positive and finite")
     return value
 
 
-def open_uniform(rng):
-    # RNG has [0,1) support; reject the measure-zero mathematical endpoint.
-    while True:
-        u = rng.random()
-        if 0 < u < 1:
-            return float(u)
-
-
-def inverse_gamma(a, b, rng, size=None):
-    positive_finite(np.array([a, b]), "IG parameters")
-    return positive_finite(b / rng.gamma(a, size=size), "IG draw")
+def open_uniform(rng, size=None):
+    """Endpoint policy for slice auxiliaries; NumPy only supplies half-open uniforms."""
+    u = np.asarray(rng.random(size)) if size is not None else np.asarray(rng.random())
+    invalid = (u <= 0) | (u >= 1)
+    while np.any(invalid):
+        u[invalid] = rng.random(np.count_nonzero(invalid))
+        invalid = (u <= 0) | (u >= 1)
+    return float(u) if u.ndim == 0 else u
 
 
 def polya_gamma(eta, rng):
+    """Policy adapter: PG(1,eta), explicit Generator and the library's Devroye method."""
     if not np.isfinite(eta).all():
         raise FloatingPointError("nonfinite PG tilt")
     return positive_finite(
@@ -33,60 +33,41 @@ def polya_gamma(eta, rng):
 
 
 def truncated_exponential(rate, upper, rng):
-    """Exp(rate) restricted to (0,upper); rate=0 is the exact uniform limit."""
+    """SciPy's truncated exponential in shape-rate units; scalar or broadcast arrays.
+
+    A zero scaled rate uses NumPy's uniform limit. Array support lets independent
+    Horseshoe local scales share a single library dispatch rather than p*R calls.
+    """
+    rate, upper = np.broadcast_arrays(np.asarray(rate, dtype=float), np.asarray(upper, dtype=float))
     positive_finite(upper, "truncation upper bound")
-    if not np.isfinite(rate) or rate < 0:
+    if not np.isfinite(rate).all() or (rate < 0).any():
         raise FloatingPointError("exponential rate must be nonnegative and finite")
-    u = open_uniform(rng)
     c = rate * upper
-    if c == 0:
-        value = upper * u
-    else:
-        value = -np.log1p(-u * -np.expm1(-c)) / rate
+    value = np.empty(rate.shape)
+    uniform = c == 0
+    if np.any(uniform):
+        value[uniform] = rng.uniform(0, upper[uniform])
+    positive = ~uniform
+    if np.any(positive):
+        value[positive] = truncexpon.rvs(c[positive], scale=1 / rate[positive], random_state=rng)
     positive_finite(value, "truncated exponential draw")
-    if value > upper:
+    if (value > upper).any():
         raise FloatingPointError("truncated exponential draw exceeded its upper bound")
-    return float(value)
+    return float(value) if value.ndim == 0 else value
 
 
 def truncated_gamma(shape, rate, upper, rng):
-    """Gamma(shape,rate) on (0,upper), without replacing a zero rate or CDF floor.
-
-    Inverse CDF is the usual path. If its truncation mass underflows, use exact
-    rejection: a bounded power proposal, or the tangent envelope of the log-concave
-    gamma density at the upper boundary. No tiny CDF is replaced by a constant.
-    """
+    """Gamma(shape, rate) restricted to (0, upper)."""
     positive_finite(np.array([shape, upper]), "Gamma shape/bound")
     if not np.isfinite(rate) or rate < 0:
         raise FloatingPointError("Gamma rate must be nonnegative and finite")
     if rate == 0:
-        value = upper * np.exp(np.log(open_uniform(rng)) / shape)
+        value = upper * rng.power(shape)
     else:
         c = rate * upper
         mass = gammainc(shape, c)
         q = open_uniform(rng) * mass
-        value = gammaincinv(shape, q) / rate if q > 0 else 0.0
-        if not 0 < value <= upper or not np.isfinite(value):
-            for _ in range(100_000):
-                if c <= 1:
-                    t = np.exp(np.log(open_uniform(rng)) / shape)
-                    log_accept = -c * t
-                elif shape > 1 and c <= shape - 1:
-                    tangent_rate = shape - 1 - c
-                    t = 1 - truncated_exponential(tangent_rate, 1.0, rng)
-                    log_accept = (shape - 1) * (np.log(t) - (t - 1))
-                else:
-                    # A numerically exceptional inverse CDF, not a tiny lower tail.
-                    trial = rng.gamma(shape) / rate
-                    if 0 < trial <= upper:
-                        value = trial
-                        break
-                    continue
-                if np.log(open_uniform(rng)) <= log_accept:
-                    value = upper * t
-                    break
-            else:
-                raise FloatingPointError("truncated Gamma rejection limit exceeded")
+        value = gammaincinv(shape, q) / rate
     positive_finite(value, "truncated Gamma draw")
     if value > upper:
         raise FloatingPointError("truncated Gamma draw exceeded its upper bound")

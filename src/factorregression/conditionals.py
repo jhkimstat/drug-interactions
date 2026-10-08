@@ -36,7 +36,11 @@ def beta_parameters(X_tilde, omega, kappa, r, sigma_beta2):
 
 
 def draw_precision_normal(mean, lower, rng, size=None):
-    """If Q=L L^T, noise is L^{-T} z, not L^{-1} z."""
+    """Reuse Q=L L^T with library normal draws and L^{-T} triangular solves.
+
+    NumPy MVN requires covariance; SciPy Covariance.from_precision would factor Q
+    again. This short composition reuses the factor already needed for the mean.
+    """
     shape = (len(mean),) if size is None else (len(mean), size)
     noise = solve_triangular(lower.T, rng.normal(size=shape), lower=False, check_finite=False)
     return mean + noise if size is None else mean[:, None] + noise

@@ -1,5 +1,7 @@
+from scipy.stats import invgamma
+
 from ..conditionals import variance_parameters
-from ..distributions import inverse_gamma
+from ..distributions import positive_finite
 from ..model import elementary_symmetric_coefficients, loading_slope
 from .common import update_common, update_loading
 
@@ -19,7 +21,9 @@ def update_variances(spec, state, rng):
     for d in spec.ranks:
         state.context = f"sigma_v2[{d}]"
         a, b = variance_parameters(state.V[d], spec.prior.a_v, spec.prior.b_v)
-        state.sigma_v2[d] = float(inverse_gamma(a, b, rng))
+        state.sigma_v2[d] = float(
+            positive_finite(invgamma.rvs(a, scale=b, random_state=rng), "sigma_v2")
+        )
 
 
 def sweep(data, spec, state, rng):

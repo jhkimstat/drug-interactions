@@ -1,10 +1,10 @@
 import numpy as np
 import pytest
 from scipy.integrate import quad
-from scipy.stats import invgamma, kstest
+from scipy.stats import kstest
 
 from factorregression.distributions import (
-    inverse_gamma,
+    open_uniform,
     polya_gamma,
     truncated_exponential,
     truncated_gamma,
@@ -47,13 +47,6 @@ def test_pg_analytic_moments_and_independent_cdf(c):
         assert abs(observed - prob) <= 5 * np.sqrt(prob * (1 - prob) / N) + 1 / N
 
 
-def test_inverse_gamma_parameterization():
-    values = inverse_gamma(6, 2, np.random.default_rng(1), size=N)
-    mean, variance = invgamma.stats(6, scale=2, moments="mv")
-    assert abs(values.mean() - mean) < 5 * np.sqrt(variance / N)
-    assert kstest(values, invgamma(6, scale=2).cdf).pvalue > 0.001 / 10
-
-
 @pytest.mark.parametrize("rate,upper", [(0, 4), (1e-12, 4), (2, 4), (200, 0.5)])
 def test_truncated_exponential_cdf(rate, upper):
     rng = np.random.default_rng(881)
@@ -66,9 +59,7 @@ def test_truncated_exponential_cdf(rate, upper):
     assert kstest(pit, "uniform").pvalue > 0.001 / 10
 
 
-@pytest.mark.parametrize(
-    "shape,rate,upper", [(3, 0, 2), (3, 2, 2), (3, 1e-12, 2), (1000, 1, 1), (1000, 0.01, 1)]
-)
+@pytest.mark.parametrize("shape,rate,upper", [(3, 0, 2), (3, 2, 2), (3, 1e-12, 2)])
 def test_truncated_gamma_against_independent_integral(shape, rate, upper):
     rng = np.random.default_rng(9921)
     values = np.array([truncated_gamma(shape, rate, upper, rng) for _ in range(N)])
@@ -85,18 +76,52 @@ def test_truncated_gamma_against_independent_integral(shape, rate, upper):
         assert abs(expected - q) < 5 * np.sqrt(q * (1 - q) / N)
 
 
+@pytest.mark.parametrize("rate", [1, 0.01])
+def test_truncated_gamma_underflow_raises_instead_of_using_fallback(rate):
+    with pytest.raises(
+        FloatingPointError, match="truncated Gamma draw must be positive and finite"
+    ):
+        truncated_gamma(1000, rate, 1, np.random.default_rng(9921))
+
+
 def test_invalid_distribution_inputs():
     rng = np.random.default_rng(1)
     with pytest.raises(FloatingPointError):
-        truncated_gamma(3, -1, 1, rng)
-    with pytest.raises(FloatingPointError):
         truncated_exponential(1, 0, rng)
+    with pytest.raises(FloatingPointError):
+        truncated_gamma(3, -1, 2, rng)
+
+
+def test_truncated_exponential_broadcasts_mixed_zero_and_positive_rates():
+    rng = np.random.default_rng(94)
+    rates = np.broadcast_to([0.0, 1e-12, 2.0], (N, 3))
+    upper = np.array([4.0, 3.0, 2.0])
+    values = truncated_exponential(rates, upper, rng)
+    assert values.shape == rates.shape
+    assert ((values > 0) & (values <= upper)).all()
+    for j, rate in enumerate(rates[0]):
+        pit = (
+            values[:, j] / upper[j]
+            if rate == 0
+            else -np.expm1(-rate * values[:, j]) / (-np.expm1(-rate * upper[j]))
+        )
+        assert kstest(pit, "uniform").pvalue > 0.001 / 10
+
+
+def test_open_uniform_scalar_and_array_reject_zero_endpoints():
+    class EndpointRNG:
+        def random(self, size=None):
+            return 0.0 if size is None else np.full(size, 0.5)
+
+    assert open_uniform(EndpointRNG()) == 0.5
+    values = open_uniform(np.random.default_rng(74), size=(4, 3))
+    assert values.shape == (4, 3) and ((values > 0) & (values < 1)).all()
 
 
 def test_rounded_truncation_endpoint_does_not_cause_spurious_failure():
     class NearOneRNG:
-        def random(self):
-            return np.nextafter(1.0, 0.0)
+        def power(self, shape):
+            return 1.0  # Power draw can round to its upper endpoint.
 
     value = truncated_gamma(10, 0, 2, NearOneRNG())
-    assert value == 2  # Within one floating-point rounding bin of the open bound.
+    assert value == 2

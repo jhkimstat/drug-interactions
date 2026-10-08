@@ -4,6 +4,7 @@ from itertools import combinations
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.special import log_expit
 
 FloatArray = NDArray[np.float64]
 
@@ -87,4 +88,5 @@ def predictor_reference(X: FloatArray, beta: FloatArray, V: dict[int, FloatArray
 
 
 def log_likelihood(y: FloatArray, eta: FloatArray) -> float:
-    return float(np.sum(y * eta - np.logaddexp(0.0, eta)))
+    """Bernoulli log likelihood using SciPy's stable log-sigmoid on signed logits."""
+    return float(log_expit(np.where(y, eta, -eta)).sum())

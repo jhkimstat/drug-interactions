@@ -1,8 +1,9 @@
 import numpy as np
 from scipy.special import expit
+from scipy.stats import invgamma
 
 from ..conditionals import indicator_log_odds, variance_parameters
-from ..distributions import inverse_gamma
+from ..distributions import positive_finite
 from ..model import (
     elementary_symmetric,
     elementary_symmetric_coefficients,
@@ -97,7 +98,9 @@ def update_hyperparameters(spec, state, rng):
         if not (0 < state.pi_z[d] < 1 and 0 < state.pi_gamma[d] < 1):
             raise FloatingPointError("invalid SSP inclusion probability")
         a, b = variance_parameters(state.tilde_v[d], prior.a_v, prior.b_v)
-        state.sigma_v2[d] = float(inverse_gamma(a, b, rng))  # Includes inactive slabs.
+        state.sigma_v2[d] = float(
+            positive_finite(invgamma.rvs(a, scale=b, random_state=rng), "sigma_v2")
+        )  # Includes inactive slabs.
 
 
 def sweep(data, spec, state, rng):
