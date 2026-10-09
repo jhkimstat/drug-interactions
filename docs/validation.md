@@ -330,3 +330,56 @@ Unity/README instructions now use the cloned prepared directory directly and res
 prepare command for a new output path. The earlier preparation-run observation that all
 local data were ignored is superseded by this exception. The agent did not issue commit or push commands
 during this change. **103 tests passed in 10.69 seconds**; Ruff and diff checks passed.
+
+### 2026-10-08 — Array 동시 실행 상한 문서화
+
+- docs/unity.md에 사용자 지정 동시 실행 상한을 두지 않는 정책을 기록하고 제출 예시의 `%3`을 제거했다. 샘플러 코드와 실험 설정은 변경하지 않았다.
+- 검증: `uv run pytest` — 103 passed (22.97s); `uv run ruff check .` — All checks passed; `git diff --check` 통과. 문서 변경이므로 추가 sampling CLI smoke는 실행하지 않았다.
+
+## Unity saved-result analysis — 2026-10-08
+
+Analyzed the existing `outputs/unity-20261008/` results using the expanded prepared
+manifest `data/pilot-long-run-all-settings-20261008/`: 39 pilot and 39 long-run fits.
+Its observations/truth and frozen stage configs match the original preparation byte for
+byte; original job mappings/seeds are unchanged. The actual summarize CLI verified saved
+observations/seeds and reported **78 expected / 62 completed fits**, producing 3,596
+functional rows and 1,350 comparison rows (1,334 functionals and 16 incomplete pairs).
+Outputs are preserved under `outputs/unity-20261008/report-analysis-20261008/`.
+
+- Pilot: 38 completed (11 diagnostics_ok, 27 mixing_flagged), 1 numerical failure.
+- Long-run: 24 completed (23 diagnostics_ok, 1 mixing_flagged), 6 numerical failures,
+  9 missing. Slurm accounting confirms the original nine-task array was cancelled before
+  execution. The failed pilot prevents its recorded afterok dependency from being satisfied;
+  the accounting record does not identify the cancellation cause/actor.
+- All seven numerical failures are Horseshoe eta cache mismatches, max absolute errors
+  6.10e-8 through 8.81e-6. They remain failures; no tolerance or algorithm was changed.
+- The completed Horseshoe sparse-3way-s2 long run still fails theta[10] and prediction
+  diagnostics. The corresponding interaction is present in 21 observed rows, all y=1;
+  its sampled coefficient has a long right tail and differing chain means.
+- Independent direct-combination reconstruction checked 744 retained snapshots across all
+  248 completed chains. Maximum theta difference: 0; probability difference: 5.00e-16.
+  Recomputing probability RMSE from all saved probability draws for all 62 completed fits
+  differed by at most 1.96e-15. Existing atol=1e-8, rtol=1e-6 remained unchanged. This
+  audits saved output consistency, not full trajectory correctness or failed chains.
+- `uv run pytest`: **103 passed in 21.57s** on Linux/Python 3.13.15.
+  `uv run ruff check .`: passed. Actual summarize CLI and analysis/plot script completed.
+  No new sampling, submissions, cancellation, prior changes, or new inference scope.
+
+See [the analysis report](unity-20261008-analysis.md) for method comparisons, reference
+qualification, figures, failure details, and interpretation limits. Single generated datasets
+and incomplete Horseshoe coverage do not support a general method ranking.
+
+## Eta cache warning change reverted — 2026-10-08
+
+At the user's request, reverted the immediately preceding warn-and-continue change
+before investigating the mismatch cause. Restored the original sampler and tests:
+`atol=1e-8`, `rtol=1e-6` mismatches cause numerical_failure; successful checks retain
+the original `state.eta = eta` reset. The warning ceiling, logging, warning metadata and
+new warning tests are removed. The plan again describes the original behavior.
+Prior Unity analysis, raw results, and unrelated working changes remain intact.
+
+Validation: `uv run pytest` — **103 passed in 20.69s**;
+`uv run ruff check .` and `git diff --check` passed. Actual Horseshoe CLI smoke on
+prepared sparse-3way-s2 data (one chain, 5 burn-in + 20 retained sweeps) completed;
+diagnostics remain insufficient_draws. Output: `outputs/smoke-cache-warning-revert-20261008/`.
+No production experiment was rerun, and the numerical failure cause remains unresolved.

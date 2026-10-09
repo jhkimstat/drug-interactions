@@ -71,7 +71,7 @@ prepared="$repo/data/pilot-long-run-20261008"
 results="$repo/outputs/unity-20261008"
 mkdir -p "$results/logs"
 
-sbatch --chdir="$repo" --time=00:15:00 --array=0-2%3 \
+sbatch --chdir="$repo" --time=00:15:00 --array=0-2 \
   --output="$results/logs/check-%A_%a.out" --error="$results/logs/check-%A_%a.err" \
   scripts/unity_experiment.sh pilot "$prepared" "$results" check
 ```
@@ -86,7 +86,7 @@ All numerical failures use nonzero job exit status and retain available failure 
 After the execution check, submit the pilot:
 
 ```bash
-sbatch --chdir="$repo" --time=01:00:00 --array=0-38%3 \
+sbatch --chdir="$repo" --time=01:00:00 --array=0-38 \
   --output="$results/logs/pilot-%A_%a.out" --error="$results/logs/pilot-%A_%a.err" \
   scripts/unity_experiment.sh pilot "$prepared" "$results"
 ```
@@ -94,12 +94,16 @@ sbatch --chdir="$repo" --time=01:00:00 --array=0-38%3 \
 Inspect the pilot completion/diagnostic tables, then submit the fixed long-run subset:
 
 ```bash
-sbatch --chdir="$repo" --time=04:00:00 --array=0-8%3 \
+sbatch --chdir="$repo" --time=04:00:00 --array=0-8 \
   --output="$results/logs/long-run-%A_%a.out" --error="$results/logs/long-run-%A_%a.err" \
   scripts/unity_experiment.sh long-run "$prepared" "$results"
 ```
 
-`%3` limits simultaneous fits to three; it is an editable resource choice. Each job requests
+Per user instruction (2026-10-08), submit arrays without a client-side concurrency cap:
+do not append `%3`, `%30`, or another `%N` limit to `--array`. Let Slurm enforce available
+resources and account/QOS limits. For an existing active array, use
+`scontrol update JobId=JOB_ID ArrayTaskThrottle=0` to remove its cap.
+This policy applies to pilot, long-run, and additional experiment arrays. Each job requests
 1 CPU and 4 GiB memory; BLAS/OpenMP threads are fixed at one. The Python fit limits are
 45 minutes for pilot and 3 hours for long-run, leaving time for diagnosis/output before
 the Slurm walltime. These limits are per fit, not a promise of runtime or an aggregate

@@ -1,6 +1,12 @@
 # Bayesian factor regression 구현 계획
 
-작성일: 2026-10-01. 갱신일: 2026-10-07. 상태: **현재 Sampling 범위 P1–P6 기준 구현·검증 완료 — Inference·Scalable SSP 보류, full pilot 미실행**.
+작성일: 2026-10-01. 갱신일: 2026-10-08. 상태: **현재 Sampling 범위 P1–P6 기준 구현·검증 완료 — Unity pilot/확장 long-run 결과 분석, 수치 실패·누락·혼합 문제 후속 점검 필요. Inference·Scalable SSP 보류**.
+
+**2026-10-08 실행 결과:** 확장 manifest 기준 78건 중 62건 완료(진단 통과 34건),
+Horseshoe 수치 실패 7건, 미실행·취소 long-run 9건이다. 완료 long-run의 Normal/SSP는
+각각 10/10건 진단 통과, Horseshoe는 3/4건 통과다. 아래의 이전 날짜 미실행 기록은
+당시 상태이며, 현재 실험 상태는 [Unity 결과 분석](unity-20261008-analysis.md)과
+validation 최신 절을 따른다. 분석에서 sampler·prior·tolerance를 변경하지 않았다.
 
 현재 Sampling 범위의 모델 명세와 구현 계약은 개발 착수가 가능한 수준으로 정리되었다. 이 문서에서 모델 명세, 확정된 결정, 변경 가능한 default, 후속 질문, 단계별 완료 조건을 함께 관리한다. 사용자 확정 사항은 §2와 §11에 표시하며, 제안 default를 본 실험 scientific setting의 확정으로 간주하지 않는다. 공통·Normal·Horseshoe·Reference SSP 코드와 검증을 구현했다. 실제 검증 범위는 §10과 docs/validation.md에 기록한다.
 
@@ -686,3 +692,7 @@ R-hat·ESS의 초기 기준과 rank/folding 정의는 [Vehtari et al.의 MCMC �
 - 2026-10-08 Unity 실험 준비: 사용자가 signal을 (1,1,1),(1,2,2),(1,3,3)으로 변경하고 pilot/long-run만 요청했다. ASC Unity batch 사용을 확인했다. 13개 DGP 생성·분리 저장, 39개 pilot 및 같은 데이터의 9개 long-run, 단순 Slurm array 스크립트, 실패 포함 효율·정확도 CSV를 준비했다. 원격 제출과 실제 pilot/long-run의 수행 여부는 docs/validation.md의 최신 기록을 따른다.
 
 - 2026-10-08 GitHub 전송 범위: 사용자 요청으로 data/pilot-long-run-20261008/의 29개 준비 파일을 .gitignore 예외에 포함했다. 코드·설정·uv.lock과 함께 commit/push하면 Unity에서 동일한 관측 데이터와 고정 설정을 받을 수 있다. Clone 후 같은 경로에서 prepare를 다시 실행하지 않도록 안내를 갱신했다.
+
+- 2026-10-08 제출 정책: 사용자 요청에 따라 Slurm array에 `%N` 동시 실행 상한을 설정하지 않는다. 서버의 자원 및 account/QOS 정책에 맡기며, docs/unity.md의 제출 예시에 반영했다.
+
+- 2026-10-08 캐시 경고 변경 철회: 원인 조사에 앞서 사용자 요청으로 직전의 경고 후 계속 실행 변경을 되돌렸다. atol=1e−8, rtol=1e−6 비교 실패 시 numerical_failure, 비교 통과 시 기존 캐시 재설정 동작을 복원했다. 결과 분석은 유지하며 검증 결과는 docs/validation.md에 기록한다.
