@@ -17,6 +17,10 @@
 - Machine-level arithmetic agreement is not a goal. Prefer simple polynomial recurrences
   and incremental updates when errors are negligible relative to posterior/Monte Carlo
   uncertainty. Retain guards against invalid draws and material predictor drift.
+- Use Sequential Prefix/Suffix DP for loading/gamma/slab slopes: build untouched suffix
+  coefficients once per component and advance the prefix after every processed effective
+  loading, including unchanged indicators and inactive slab coordinates. Do not use the
+  full-polynomial exclusion subtraction recurrence.
 - Keep the truncated Gamma wrapper's gammainc/gammaincinv inverse-CDF path without a
   rejection fallback. Let existing support checks report invalid draws; do not substitute
   rates or floor scales/CDF masses.

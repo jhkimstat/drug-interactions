@@ -42,6 +42,8 @@ statuses; the short smoke run is not expected to meet the pilot ESS/MCSE thresho
 General `p`, `1 <= D <= p` and a positive integer `R_d` per included order are supported.
 No range of computational feasibility or convergence is guaranteed. True support is never
 an input to fitting. Every loading update uses the latest predictor and loading values.
+Loading slopes use Sequential Prefix/Suffix DP: suffix coefficients are built once per
+component and the rolling prefix incorporates each newly updated effective loading.
 Pólya–Gamma sampling explicitly uses the Devroye method; IG uses shape and inverse-scale
 parameters with density proportional to `x**(-a-1) * exp(-b/x)`.
 

@@ -116,6 +116,12 @@ original results are preserved. For timing comparisons, use the same permitted n
 via Slurm `--constraint` where available, and inspect recorded host names before pooling
 ESS/sec from different hardware. Account/constraint options can be supplied to `sbatch`.
 
+Sequential Prefix/Suffix DP was adopted in production on 2026-10-08. To rerun after pulling
+this code change, keep the prepared dataset and use a fresh results directory, for example
+`results="$repo/outputs/unity-prefix-suffix-20261008"`, then create its `logs/` directory.
+This preserves the earlier recurrence-based runs for comparison. Seeded trajectories may
+change with the new floating-point arithmetic; priors and cache tolerances are unchanged.
+
 ## 4. Evaluation
 
 After each stage, run the following in an interactive compute-node allocation (for example

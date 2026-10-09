@@ -1,4 +1,5 @@
 import copy
+from itertools import combinations, cycle
 
 import numpy as np
 import pytest
@@ -43,21 +44,19 @@ def test_full_sweeps_preserve_current_predictor(problem, method, kernel):
         ("ssp_reference", ssp_reference),
     ],
 )
-def test_polynomial_builds_are_per_component_not_per_coordinate(
-    problem, monkeypatch, method, module
-):
+def test_suffix_builds_are_per_component_not_per_coordinate(problem, monkeypatch, method, module):
     data, spec = problem
     rng = np.random.default_rng(884)
     state = initialize(data, spec, method, rng, 3)
-    original = model.elementary_symmetric_coefficients
+    original = model.suffix_symmetric_coefficients
     calls = []
 
     def count_builds(a, degree):
         calls.append(degree)
         return original(a, degree)
 
-    monkeypatch.setattr(model, "elementary_symmetric_coefficients", count_builds)
-    monkeypatch.setattr(module, "elementary_symmetric_coefficients", count_builds)
+    monkeypatch.setattr(model, "suffix_symmetric_coefficients", count_builds)
+    monkeypatch.setattr(module, "suffix_symmetric_coefficients", count_builds)
     if method == "ssp_reference":
         module.update_gamma(data, spec, state, rng)
         assert len(calls) <= sum(spec.ranks.values())
@@ -67,6 +66,91 @@ def test_polynomial_builds_are_per_component_not_per_coordinate(
     else:
         module.update_loadings(data, spec, state, rng)
         assert len(calls) == sum(spec.ranks.values())
+
+
+@pytest.mark.parametrize(
+    "method,update",
+    [
+        ("normal", normal.update_loadings),
+        ("horseshoe", horseshoe.update_loadings),
+        ("ssp_reference", ssp_reference.update_slabs),
+    ],
+)
+def test_large_loading_update_pass_preserves_eta(problem, method, update):
+    data, spec = problem
+    rng = np.random.default_rng(411)
+    state = initialize(data, spec, method, rng, 3)
+    loadings = state.tilde_v if method == "ssp_reference" else state.V
+    loadings[3][:, 0] = [1e6, 1e-6, 1e-6, 1e-6, 1e-6]
+    state.eta = predictor_reference(data.X, state.beta, state.effective())
+    update(data, spec, state, rng)
+    assert_allclose(
+        state.eta, predictor_reference(data.X, state.beta, state.effective()), atol=1e-8, rtol=1e-6
+    )
+
+
+def test_ssp_gamma_mixed_gates_use_new_prefix_values(problem):
+    data, spec = problem
+    state = initialize(data, spec, "ssp_reference", np.random.default_rng(411), 3)
+    state.tilde_v[3][:, 0] = [1e6, 1e-6, 1e-6, 1e-6, 1e-6]
+    state.gamma[3][:, 0] = [False, True, True, False, True]
+    state.eta = predictor_reference(data.X, state.beta, state.effective())
+    reference = copy.deepcopy(state)
+
+    class FixedUniforms:
+        def __init__(self):
+            near_one = np.nextafter(1.0, 0.0)
+            self.values = cycle((0.0, near_one, 0.0, near_one, near_one))
+
+        def random(self):
+            return next(self.values)
+
+    actual_rng, reference_rng = FixedUniforms(), FixedUniforms()
+    ssp_reference.update_gamma(data, spec, state, actual_rng)
+    reference_indicators(data, spec, reference, reference_rng, "gamma")
+    assert np.array_equal(state.gamma[3][:, 0], [True, False, True, False, False])
+    for d in spec.ranks:
+        assert np.array_equal(state.gamma[d], reference.gamma[d])
+    assert_allclose(state.eta, reference.eta, atol=1e-8, rtol=1e-6)
+
+
+def test_ssp_inactive_slab_draws_do_not_enter_the_prefix(problem):
+    data, spec = problem
+    state = initialize(data, spec, "ssp_reference", np.random.default_rng(16), 3)
+    for d in spec.ranks:
+        state.gamma[d][::2] = False
+    state.eta = predictor_reference(data.X, state.beta, state.effective())
+    reference = copy.deepcopy(state)
+    actual_rng, reference_rng = np.random.default_rng(35), np.random.default_rng(35)
+    ssp_reference.update_slabs(data, spec, state, actual_rng)
+    for d, rank in spec.ranks.items():
+        for k in range(rank):
+            for j in range(spec.p):
+                if reference.gamma[d][j, k]:
+                    v = reference.effective()[d][:, k]
+                    h = data.X[:, j] * sum(
+                        (
+                            np.prod(data.X[:, a] * v[list(a)], axis=1)
+                            for a in combinations([q for q in range(spec.p) if q != j], d - 1)
+                        ),
+                        np.zeros(len(data.y)),
+                    )
+                    common.update_loading(
+                        data,
+                        reference,
+                        reference.tilde_v[d][:, k],
+                        j,
+                        h,
+                        reference.sigma_v2[d],
+                        reference_rng,
+                    )
+                else:
+                    reference.tilde_v[d][j, k] = reference_rng.normal(
+                        0, np.sqrt(reference.sigma_v2[d])
+                    )
+    assert_allclose(state.eta, reference.eta, atol=1e-8, rtol=1e-6)
+    for d in spec.ranks:
+        assert_allclose(state.tilde_v[d], reference.tilde_v[d], atol=1e-8, rtol=1e-6)
 
 
 def reference_indicators(data, spec, state, rng, name):

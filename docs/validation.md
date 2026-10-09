@@ -70,12 +70,14 @@ not been exercised on a remote repository.
 
 ## Numerical implementation notes
 
-The predictor uses elementary-symmetric-polynomial dynamic programming. Following the
-2026-10-07 numerical-cost review, each component builds coefficients once per coordinate
-pass. Exclusion uses q_t=e_t−a_j q_{t−1}; after a draw, coefficients receive Δa_j q_{t−1}.
-Ordinary cancellation is accepted. Polynomial/loading-pass cost is O(n p Σ_d d R_d),
-with O(nd) temporary coefficient storage per component. The beta precision is still dense,
-and no general range of computational feasibility or convergence is promised.
+The predictor uses elementary-symmetric-polynomial dynamic programming. Loading, active
+SSP gamma and slab slopes now use Sequential Prefix/Suffix DP, adopted on 2026-10-08.
+Each component builds suffix coefficients once; a rolling prefix includes each newly
+processed effective loading. The degree d-1 prefix/suffix sum avoids excluding a large
+loading by subtraction. Loading-pass cost remains O(n p sum_d d R_d); per-component
+coefficient storage is O(npd). The earlier exclusion recurrence/delta table update is
+removed. Ordinary floating-point rounding is accepted and cache tolerance is unchanged.
+The beta precision is still dense; no general feasibility/convergence range is promised.
 
 Numerical failures stop the affected fit and preserve completed retained draws with failure
 context. Constant or incomplete chain diagnostics are marked undefined/incomplete.
@@ -197,7 +199,7 @@ remove only its rejection fallback.
 | Code | Library alternative checked | Reason to retain |
 | --- | --- | --- |
 | Truncated Gamma wrapper | SciPy `gammainc`/`gammaincinv` | Retains the user-specified shape-rate/bound/RNG interface and rate-zero power conditional. Positive-rate sampling uses the existing SciPy inverse-CDF composition; no custom rejection algorithm remains. Existing support checks report invalid draws |
-| Partial elementary symmetric coefficients and incremental exclusion | Per-row `np.polynomial.polynomial.polyfromroots` | NumPy constructs full-degree polynomials, with no equivalent batched partial-degree/incremental interface. The needed partial table is about 214× faster in the measured case below |
+| Partial symmetric DP and sequential prefix/suffix slopes | Per-row `np.polynomial.polynomial.polyfromroots` | NumPy constructs full-degree polynomials, with no equivalent batched partial-degree/sequential prefix-suffix interface. The earlier partial-table measurement below motivates retaining DP; prefix/suffix adoption additionally addresses observed large-loading cancellation |
 | Precision Gaussian composition | NumPy MVN or SciPy `Covariance.from_precision` | NumPy needs covariance; SciPy's precision factory factors Q again. The helper uses NumPy normal draws and SciPy triangular solves to reuse the existing precision Cholesky factor |
 | PG adapter | polyagamma sampling | Already delegates sampling; the adapter records the model's shape=1, explicit RNG and Devroye choice, and checks valid output |
 | Open uniform/support guards | NumPy Generator | Slice auxiliaries require strictly positive uniforms; NumPy's API is half-open. Helpers only enforce endpoint/support/error policy and contain no alternative PRNG |
@@ -383,3 +385,70 @@ Validation: `uv run pytest` — **103 passed in 20.69s**;
 prepared sparse-3way-s2 data (one chain, 5 burn-in + 20 retained sweeps) completed;
 diagnostics remain insufficient_draws. Output: `outputs/smoke-cache-warning-revert-20261008/`.
 No production experiment was rerun, and the numerical failure cause remains unresolved.
+
+## Horseshoe eta-cache investigation — 2026-10-08
+
+The user supplied downloaded Unity results and explicitly requested comparison without
+changing the sampler. Found one pilot and six long-run Horseshoe cache failures. Replayed
+five available pre-failure windows from saved beta/V draws, using identical coordinate
+values across cached recurrence, freshly rebuilt full-polynomial recurrence, and direct
+combinatorial slopes. Both recurrence variants violated existing cache tolerance in all
+five windows; direct combinations had no violations, with maximum eta error 3.02e-14.
+Cached-recurrence residuals at the last retained sweep reproduce the logged failure errors
+to about 1e-15. DP/combinatorial predictor reconstruction differs by <=6.7e-16 at those ends.
+
+Also compared 32 retained-state fixtures and a labelled large-loading stress fixture.
+Direct combinations removed the observed fixed-update discrepancies. Analysis-only seeded
+reruns completed 4,000 and 24,000 sweeps with direct slopes; the local current-recurrence
+long-run failed at sweep 300 (Unity failed at 1,800). The local pilot did not reproduce its
+Unity failure. Two Unity failures occurred before retention and cannot be replayed from
+stored draws. Cross-platform stochastic trajectories and full posterior convergence are
+not claimed identical or validated by these comparisons.
+
+Production src/config/test files, priors and cache tolerances remain unchanged. No downloaded
+files were modified. **103 tests passed in 9.49 seconds**, Ruff passed, and source diff checks
+confirm this is analysis/documentation only. Details and numerical tables are in
+[the investigation report](eta-cache-investigation.md); reproducible analysis artifacts are
+under `outputs/eta-cache-investigation-20261008/`. No sampler fix was implemented.
+
+## Sequential Prefix/Suffix DP feasibility — 2026-10-08
+
+Analysis-only prototype: suffix coefficients are built once per component, rolling prefix
+coefficients use newly sampled coordinates, and each excluded slope is a single-degree
+prefix/suffix convolution. All five recorded pre-failure windows pass unchanged cache
+tolerance; maximum eta error is 3.109e-14. Generic sequential fixtures (5,2),(5,3),(5,5),
+(7,4), large-loading stress through M=1e8, and a 24,000-sweep diagnostic chain also pass.
+
+Complete loading blocks at n=200,p=5,R_2=R_3=5 take about 0.73 ms with current recurrence
+and 0.72 ms with prefix/suffix, versus 1.25 ms with direct combinations, in the local
+controlled timing. Isolated large-p passes retain O(npd) time but have a measured 65–67%
+constant overhead; coefficient storage grows from O(nd) to O(npd). Measurement details
+and limitations are in [the investigation report](eta-cache-investigation.md).
+
+No production sampler/model/config/test changes, tolerance relaxation, clipping or prior
+changes were made. **103 tests passed in 9.65 seconds**, Ruff passed. Analysis artifacts
+remain in the ignored investigation output directory. This establishes feasibility for the
+observed cache failures, not posterior convergence or a blanket accuracy guarantee.
+
+## Sequential Prefix/Suffix DP production adoption — 2026-10-08
+
+The user chose this as the final algorithm. Normal/Horseshoe loading scans and Reference
+SSP active gamma/slab scans now build suffix once per component and advance prefix from
+each processed effective coordinate. Common eta updates remain immediate. Removed the
+production exclusion subtraction recurrence and delta polynomial updater. No prior,
+conditioning/scan order, cache tolerance, dependency or prepared dataset changes were made.
+
+Final checks: **112 tests passed in 10.25 seconds**. Independent combinations cover generic
+orders and sequential prefix updates; large-loading regression fixtures preserve structural
+zero slopes and eta; SSP tests explicitly cover births, deaths, unchanged gates and inactive
+slab draws. Existing conditional-density, posterior-quadrature and deterministic replay tests
+pass. `uv run ruff check .`, Ruff format checks and diff checks pass.
+
+Replaying the five observed failure windows through production Horseshoe loading updates
+with recorded draw values gives no violations and maximum eta error 3.109e-14. A production
+24,000-sweep Horseshoe chain completes with maximum checked error 3.553e-14.
+Nine smoke fits complete **7,200 sweeps** without numerical failures; all remain
+`mixing_flagged`. Outputs are under `outputs/smoke-prefix-suffix-production-20261008/` and
+`outputs/eta-cache-investigation-20261008/production-*.json`. These checks establish the
+observed numerical fix, not posterior convergence for the Unity experiments. Actual Unity
+resubmission remains to be performed in a fresh results directory using the shared data.

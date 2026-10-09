@@ -51,7 +51,7 @@ Normal baseline의 첨부 노트는 `/Users/jaehoonkim/Library/Mobile Documents/
 
 이를 구체화하는 설계안은 다음과 같다. 노트 표기를 읽기 쉬운 ASCII로 옮기고 shape와 분포 매개변수화를 문서화한다. 표준 수치 라이브러리를 우선 사용하며 역행렬을 직접 계산하지 않는다. 모델 상태, 파생 캐시, 난수 상태, 진단을 구분한다. 수치적 정확성·검증 가능성·재현성은 위 목표를 뒷받침하고, 성능 최적화는 검증된 병목이 있을 때만 수행한다. 범용 sampler 계층, plugin/callback framework, 범용 캐시·설정 엔진을 만들지 않는다.
 
-**사용자 확정 수치 목표 (2026-10-07):** Machine-precision agreement는 목표가 아니다. Posterior inference·sampler behavior에 비해 오차가 무시할 만하면 더 단순하고 빠른 구현을 우선한다. Full polynomial의 제외 recurrence 및 ordinary floating-point cancellation을 허용하며, 고정밀 일치를 위한 매 좌표 재계산은 사용하지 않는다. Invalid draw·유의미한 predictor drift에 대한 검사는 유지한다.
+**사용자 확정 수치 목표 (2026-10-07, 알고리즘 갱신 2026-10-08):** Machine-precision agreement는 목표가 아니다. Posterior inference·sampler behavior에 비해 오차가 무시할 만하면 더 단순하고 빠른 구현을 우선한다. 사용자 요청으로 Sequential Prefix/Suffix DP를 최종 slope 알고리즘으로 채택한다. 큰 Horseshoe loading에서 관측된 exclusion subtraction recurrence의 오차 증폭을 제거하고, 매 좌표 전체 polynomial 재계산 없이 순차 갱신을 유지한다. Invalid draw·유의미한 predictor drift 검사와 기존 tolerance는 유지한다.
 
 **사용자 확정 library 우선 원칙 (2026-10-07):** NumPy/SciPy/기존 의존성이 동등한 기능을 제공하면 해당 well-tested 함수를 우선한다. Custom implementation은 API 누락·검증된 수치 실패·측정된 계산상 이점이 있는 경우만 유지하며 이유를 기록한다. Inverse-Gamma는 custom reciprocal-Gamma sampler/wrapper를 제거하고 SciPy invgamma.rvs(a,scale=b,random_state=rng)를 직접 사용한다.
 
@@ -96,7 +96,11 @@ Normal baseline의 첨부 노트는 `/Users/jaehoonkim/Library/Mobile Documents/
 e_t(a_{1:j})=e_t(a_{1:j-1})+a_j e_{t-1}(a_{1:j-1}),\qquad e_0=1
 \]
 
-의 동적계획법이다. 전체 predictor 계산은 \(O(np\sum_d dR_d)\)이며, 모든 interaction design column을 대규모로 만들지 않는다. 각 component의 전체 p개 변수에 대한 e_0,...,e_{d-1}을 pass 시작에 한 번 계산한다. 제외 계수는 q_0=1, q_t=e_t−a_j q_{t−1}로 계산하고 h_v=x_ij q_{d-1}을 사용한다. Loading이 바뀌면 old a_j의 제외 계수로 e_t←e_t+Δa_j q_{t−1}을 즉시 갱신한다. 이 recurrence의 ordinary cancellation을 허용하며 full polynomial을 좌표마다 다시 만들지 않는다. Polynomial·loading pass의 비용은 O(n p Σ_d dR_d), component별 임시 coefficient 저장은 O(nd)이다. Dense beta block의 비용까지 선형이라고 주장하지 않는다.
+의 동적계획법이다. 전체 predictor 계산은 O(n p Σ_d d R_d)이며, 모든 interaction design column을 대규모로 만들지 않는다. Loading·active gamma/slab의 slope는 **Sequential Prefix/Suffix DP**를 사용한다. Component pass 시작에 아직 갱신하지 않은 좌표의 suffix 계수 S[j,t]=e_t(a_j,...,a_{p-1})를 차수 d−1까지 한 번 계산한다. 이미 처리한 새 effective loading의 prefix P[t]를 유지하며, 좌표 j의 slope는 h_v=x_ij Σ_t P[t]S[j+1,d−1−t]로 구한다. 가능한 차수만 합산하여 좌표당 O(nd)이며 전체 convolution table을 계산하지 않는다.
+
+새 loading 또는 gamma를 갱신하고 eta를 즉시 반영한 뒤 P_new[t]=P_old[t]+a_j_new P_old[t−1]로 prefix를 확장한다. 우변은 이전 prefix에서 계산한다. SSP에서는 a_j_new=x_ij gamma_j_new tilde_v_j_new이며, indicator가 그대로이거나 inactive slab을 prior에서 갱신한 좌표도 실제 effective 값으로 prefix를 진행한다. 아직 처리하지 않은 좌표는 바뀌지 않으므로 suffix가 해당 pass 동안 유효하다. Component마다 prefix를 초기화하고 suffix를 다시 만든다. Full-polynomial exclusion recurrence와 delta coefficient 갱신은 제거한다.
+
+Loading pass 비용은 O(n p Σ_d d R_d), component별 coefficient 저장은 O(npd)이다. 현재 n=200,p=5,d=3에서 suffix+rolling prefix table은 33,600 bytes이며 모든 component의 table을 동시에 보존하지 않는다. Dense beta block의 비용까지 선형이라고 주장하지 않는다.
 
 한 loading \(v_{jk}^{(d)}\)에 대해 노트의 조건부 선형 표현을 사용한다.
 
@@ -493,7 +497,7 @@ run 설정은 입력·출력, method, seed, chain 수, iteration 수를 포함�
 | Reference SSP 표본 상태 | 모든 z[R_d],gamma[p,R_d],tilde_v[p,R_d],pi_z,pi_gamma 및 차수별 sigma_v2[d] |
 | Scalable SSP 표본 상태 — 보류 | active component label 집합, 각 성분의 support와 active slab 값,pi_z,pi_gamma,sigma_v2[d]; inactive gamma/slab 배열 없음 |
 | Normal 표본 상태 | V, 차수별 sigma_v2[d]; 별도 mean state 없음 |
-| 파생값 | effective V, interaction contributions, eta, polynomial caches |
+| 파생값 | effective V, interaction contributions, eta, prefix/suffix tables |
 | 실행·진단 | method/chain RNG, sweep 번호, burn-in 구분, timing, failure context |
 
 SSP effective V를 잠재변수와 독립적으로 수정하지 않는다. `eta`를 캐시한다면 모델 상태에서 재구성한 값과 주기적으로 비교한다. beta 변경은 main predictor, loading/gamma/z 변경은 해당 성분과 total predictor를 즉시 무효화·갱신한다. scale 변경은 다음 조건부분포의 prior precision에 반영한다. omega 변경은 모든 omega-weighted statistic을 무효화한다. omega 갱신 이후의 eta 변경만으로 같은 sweep 안에서 omega를 다시 뽑지는 않는다.
@@ -538,7 +542,7 @@ Scan은 노트의 sweep 순서와 각 단계 내부의 오름차순 d→k→j로
 | Normal draw | 모든 V^(d),σ_v^{2(d)} | interaction 재구성과 분산 조건부분포 점검에 필요 |
 | Horseshoe draw | 모든 V^(d),λ_jk^(d),τ_k^(d) | scale·loading 상태를 재검토하고 다른 요약을 계산할 수 있게 보존 |
 | Reference SSP draw | 모든 z,γ,tilde_v,π_z,π_gamma,σ_v² | inactive indicator/slab까지 포함한 expanded state를 보존 |
-| ω·polynomial cache·관측별 η | 기본 저장 제외 | 보통 큰 파생/보조 배열이며 retained parameter state에서 필요한 predictor를 재계산할 수 있음. 요청 시 ω 저장 옵션 제공 |
+| ω·prefix/suffix table·관측별 η | 기본 저장 제외 | 보통 큰 파생/보조 배열이며 retained parameter state에서 필요한 predictor를 재계산할 수 있음. 요청 시 ω 저장 옵션 제공 |
 | p=5,D=3 검증용 파생 draw | 20개 θ_α^(d), 32개 노출 패턴의 예측확률, marginal log likelihood·log posterior | Label·부호 비식별성에 덜 민감한 sampler 진단용. Inference의 PIP·선택·효과 보고 구현과 구별 |
 | 일반 p,D 파생 draw | 요청한 interaction tuple·노출 패턴만 | 조합 전체를 자동 열거하지 않아 기본 출력의 폭증을 피함. 요청이 없으면 관측 X의 첫 min(16,n)행에 대한 예측확률을 진단용으로 보존 |
 | 파일 | chain별 compressed NPZ, configuration·metadata·diagnostics JSON | NumPy로 직접 읽을 수 있는 간단한 연구 결과 형식. Python 객체 pickle이나 재시작용 state 직렬화는 사용하지 않음 |
@@ -575,7 +579,7 @@ Marginal log posterior는 현재 유지된 η의 Bernoulli log likelihood와 **�
 | P6a — 보류 | 추론 및 효과 요약 | 구조 PIP, sign mass, quantile/conditional summary 및 선택 규칙은 후속 논의·구현 |
 | P7 — Unity 실행 준비 | 13개 DGP pilot 및 3개 dataset long-run | 생성·truth 분리·고정 설정·task별 실행·비교 CSV 제공. 실제 서버 실행과 충분한 표본의 혼합 평가는 대기; 반복 실험·sensitivity는 후속 |
 | P8 — 후속 | pilot 이후 설정 확정 및 본 실험 | pilot 근거로 n·replication·R_2,R_3·prior hyperparameters·MCMC budget을 결정하고 실행 전 기록; 선택 threshold 등 평가 규칙 확정; 13개 DGP에서 유효 결과와 실패·반복 오차 보고; seed·설정으로 주요 표·그림 재생성 |
-| P9 — recurrence·중복 계산 최적화 검증 완료 | 측정 기반 최적화 | P1 참조 및 posterior 검증 보존; 전체 sweep 시간을 비교하고 병목 개선의 근거 제시 |
+| P9 — sequential prefix/suffix 채택·검증 | 측정 기반 최적화 | P1 참조 및 posterior 검증 보존; 전체 sweep 시간을 비교하고 병목 개선의 근거 제시 |
 
 Scalable을 재개한 뒤 P4c 이후 두 축(R_d,p) 성능 실험을 설계한다. Active 수·support 크기를 기록하며 메모리, proposal 비용, complete-sweep 시간, 수락률, invariant ESS/초를 평가한다. 이 성능 검증을 P4c의 posterior correctness 대신 사용하지 않는다. 현재 Sampling 개발에서는 이 비교·성능 실험을 요구하지 않는다.
 
@@ -589,7 +593,7 @@ P5에서 quadrature가 가능한 차원으로 문제를 제한하며 고차원 p
 
 | 검증 종류 | 제안 default | 근거·판정 방식 |
 | --- | --- | --- |
-| Deterministic predictor·θ·h/g·좌표 직후 η | atol=1e−8, rtol=1e−6 | 명시적 interaction reference와 recurrence/캐시 계산에서 ordinary cancellation을 허용. Machine-level 일치 대신 conditional mean/variance·posterior 비교로 오차 영향을 확인. abs error ≤ atol + rtol×abs(reference)로 판정 |
+| Deterministic predictor·θ·h/g·좌표 직후 η | atol=1e−8, rtol=1e−6 | 명시적 interaction reference와 sequential prefix/suffix·eta 캐시 계산에서 ordinary rounding을 허용. Machine-level 일치 대신 conditional mean/variance·posterior 비교로 오차 영향을 확인. abs error ≤ atol + rtol×abs(reference)로 판정 |
 | Gaussian mean·variance 및 joint-density difference | atol=1e−8, rtol=1e−6 | Gaussian/IG·indicator 식을 독립 joint density의 차이와 비교. Density 자체보다 log-density difference를 사용 |
 | Cholesky·linear solve | 상대 backward residual ≤1e−6 | \(\lVert A m-b\rVert/(\lVert A\rVert\lVert m\rVert+\lVert b\rVert)\)를 검사. 0 분모인 exact-zero fixture는 절대오차로 검사 |
 | 주기적 η 캐시 검사 | 매 100 sweeps 및 마지막 sweep, atol=1e−8, rtol=1e−6 | 반복적인 delta update의 누적 rounding을 고려. 동일한 inference-scale 기준으로 유의미한 drift를 검출하고 실패를 숨기지 않음 |
@@ -657,7 +661,7 @@ R-hat·ESS의 초기 기준과 rank/folding 정의는 [Vehtari et al.의 MCMC �
 | Q18 | Draw 저장·실패 정책 | §9.2–9.3에 제안 default 명시: thinning=1, full latent state·NPZ/JSON, ω 기본 제외, 512 MiB draw 예산, 캐시 검사·실패 상태 구분 |
 | Q19 | 검증 tolerance·diagnostics | §10.1–10.2에 제안 default 명시: deterministic atol/rtol, IID N=50,000·MCSE/CDF 기준, R-hat<1.01·bulk/tail ESS≥400 및 정밀도·이동 기록 |
 
-현재 Sampling 범위의 P1–P6 기준 구현과 수치 비용 refactor를 제공했다. 현재 103개 테스트와 lint/format이 통과했다. Unity 준비 과정의 새 CLI check 18개 fit(1,800 sweeps)과 앞선 sampler smoke 결과는 docs/validation.md에 기록했다. 최초 구현의 locked offline 설치·sdist/wheel 빌드도 기록되어 있다. Smoke의 혼합 진단은 모두 mixing_flagged이며 수렴 또는 scientific accuracy를 주장하지 않는다. Q03/Q08의 Inference와 Q15/Q16의 Scalable SSP는 계속 보류한다. 현재 P7의 Unity pilot/long-run 실행 준비를 추가했다. 실제 서버 실행과 결과 해석이 다음 단계이며, 반복 실험·prior/rank sensitivity는 이후로 보류한다. 본 실험 scientific setting은 pilot 이후 결정한다. GitHub 원격 연결·공개·push는 아직 수행하지 않았다.
+현재 Sampling 범위의 P1–P6 기준 구현과 수치 비용 refactor를 제공했다. 현재 112개 테스트와 lint/format이 통과했다. Sequential Prefix/Suffix DP 채택 후 실제 실패 5개 구간 재생, 24,000-sweep production Horseshoe 진단 실행 및 9개 smoke fit(7,200 sweeps)이 통과했다. 최신 결과는 docs/validation.md에 기록했다. 최초 구현의 locked offline 설치·sdist/wheel 빌드도 기록되어 있다. Smoke의 혼합 진단은 모두 mixing_flagged이며 수렴 또는 scientific accuracy를 주장하지 않는다. Q03/Q08의 Inference와 Q15/Q16의 Scalable SSP는 계속 보류한다. 현재 P7의 Unity pilot/long-run 실행 준비를 추가했다. 실제 서버 실행과 결과 해석이 다음 단계이며, 반복 실험·prior/rank sensitivity는 이후로 보류한다. 본 실험 scientific setting은 pilot 이후 결정한다. GitHub 원격 연결·공개·push는 아직 수행하지 않았다.
 
 ## 12. 검토 기록
 
@@ -696,3 +700,9 @@ R-hat·ESS의 초기 기준과 rank/folding 정의는 [Vehtari et al.의 MCMC �
 - 2026-10-08 제출 정책: 사용자 요청에 따라 Slurm array에 `%N` 동시 실행 상한을 설정하지 않는다. 서버의 자원 및 account/QOS 정책에 맡기며, docs/unity.md의 제출 예시에 반영했다.
 
 - 2026-10-08 캐시 경고 변경 철회: 원인 조사에 앞서 사용자 요청으로 직전의 경고 후 계속 실행 변경을 되돌렸다. atol=1e−8, rtol=1e−6 비교 실패 시 numerical_failure, 비교 통과 시 기존 캐시 재설정 동작을 복원했다. 결과 분석은 유지하며 검증 결과는 docs/validation.md에 기록한다.
+
+- 2026-10-08 Horseshoe eta-cache 조사: 사용자 지시에 따라 sampler를 변경하지 않았다. 제공된 Unity 결과의 7개 cache failure 중 저장 draw가 있는 5개 구간을 동일한 β/V 값으로 재생했다. Cached/fresh full-polynomial exclusion recurrence는 모두 기존 tolerance를 초과했고 direct combinatorial slope는 모두 통과했다(최대 η 오차 3.02e−14). 수치 실패의 직접 원인은 큰 loading을 제외할 때의 cancellation과 delta 갱신에 의한 오차 증폭으로 확인했다. 근거·재실행 한계는 [조사 보고서](eta-cache-investigation.md)에 기록하며 구현 방식·tolerance 변경은 이번 작업에 포함하지 않는다.
+
+- 2026-10-08 Sequential Prefix/Suffix DP 가능성 검토: suffix는 component pass 시작에 한 번, prefix는 각 새 loading 이후 갱신하는 분석용 구현을 검증했다. 시간 복잡도 O(n p Σ_d dR_d)를 유지하면서 기존 실패 5개 구간 모두 통과했다(최대 η 오차 3.109e-14). 현재 p=5의 전체 loading block 비용은 recurrence와 실측상 거의 같으며, coefficient 메모리는 O(nd)→O(npd)이다. 큰 p에서의 상수 비용 증가 및 측정 조건은 조사 보고서에 기록한다. Production sampler는 아직 변경하지 않았다.
+
+- 2026-10-08 최종 알고리즘 채택: 사용자 요청으로 Sequential Prefix/Suffix DP를 production Normal·Horseshoe loading 및 Reference SSP active gamma/slab 갱신에 반영했다. 기존 full-polynomial exclusion recurrence와 delta coefficient 갱신을 제거했다. 새 effective 좌표를 매번 prefix에 반영하고 순차 scan·eta 즉시 갱신·prior·기존 tolerance는 유지한다. 큰 loading 및 SSP gate의 독립 회귀 검증을 추가했다. 실제 검증 결과는 docs/validation.md 및 조사 보고서의 adoption 절에 기록한다.

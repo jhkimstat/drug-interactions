@@ -10,7 +10,7 @@ FloatArray = NDArray[np.float64]
 
 
 def elementary_symmetric_coefficients(a: FloatArray, degree: int) -> FloatArray:
-    """Rows of (e_0,...,e_degree), built once per component/coordinate pass."""
+    """Rows of (e_0,...,e_degree) from the ordinary forward DP."""
     n, p = a.shape
     e = np.zeros((n, degree + 1))
     e[:, 0] = 1.0
@@ -27,32 +27,53 @@ def elementary_symmetric(a: FloatArray, degree: int) -> FloatArray:
     return elementary_symmetric_coefficients(a, degree)[:, degree]
 
 
-def loading_slope(
-    X: FloatArray, v: FloatArray, d: int, j: int, polynomial: FloatArray | None = None
-) -> FloatArray:
-    """Current h_v from q_0=1, q_t=e_t-a_j*q_{t-1}.
+def suffix_symmetric_coefficients(a: FloatArray, degree: int) -> FloatArray:
+    """suffix[j] holds e_0,...,e_degree for columns j,...,p-1; O(np*degree)."""
+    n, p = a.shape
+    suffix = np.zeros((p + 1, n, degree + 1))
+    suffix[:, :, 0] = 1.0
+    for j in range(p - 1, -1, -1):
+        suffix[j] = suffix[j + 1]
+        stop = min(degree, p - j)
+        suffix[j, :, 1 : stop + 1] += a[:, j, None] * suffix[j + 1, :, :stop]
+    return suffix
 
-    Samplers pass a current component polynomial, making this O(n*d). The optional
-    standalone path builds the full polynomial once. Ordinary cancellation is accepted.
+
+def advance_symmetric_prefix(prefix: FloatArray, new_a: FloatArray, j: int) -> None:
+    """Include the newly updated coordinate j in a rolling prefix.
+
+    Multiplication materializes the old coefficients before the overlapping +=.
     """
-    if polynomial is None:
-        polynomial = elementary_symmetric_coefficients(X * v, d - 1)
-    a_j = X[:, j] * v[j]
-    excluded = np.ones(X.shape[0])
-    for t in range(1, d):
-        excluded = polynomial[:, t] - a_j * excluded
-    return X[:, j] * excluded
+    stop = min(prefix.shape[1] - 1, j + 1)
+    prefix[:, 1 : stop + 1] += new_a[:, None] * prefix[:, :stop]
 
 
-def update_symmetric_coefficients(
-    polynomial: FloatArray, old_a: FloatArray, delta_a: FloatArray
-) -> None:
-    """Update e_t in place by delta_a*q_{t-1}, using the old excluded coefficients."""
-    excluded = np.ones(polynomial.shape[0])
-    for t in range(1, polynomial.shape[1]):
-        next_excluded = polynomial[:, t] - old_a * excluded
-        polynomial[:, t] += delta_a * excluded
-        excluded = next_excluded
+def loading_slope(
+    X: FloatArray,
+    v: FloatArray,
+    d: int,
+    j: int,
+    *,
+    prefix: FloatArray | None = None,
+    suffix: FloatArray | None = None,
+) -> FloatArray:
+    """Excluded e_(d-1) from updated prefix and untouched suffix, without subtraction.
+
+    A sampler builds the suffix once per component and advances the prefix after
+    each draw, so each slope costs O(nd). Standalone calls build the two tables
+    from current v; cached calls must follow the ascending coordinate scan.
+    """
+    degree = d - 1
+    if prefix is None:
+        prefix = elementary_symmetric_coefficients(X[:, :j] * v[:j], degree)
+    if suffix is None:
+        suffix = suffix_symmetric_coefficients(X * v, degree)
+    low = max(0, degree - (X.shape[1] - j - 1))
+    high = min(degree, j)
+    h = prefix[:, low] * suffix[j + 1, :, degree - low]
+    for t in range(low + 1, high + 1):
+        h += prefix[:, t] * suffix[j + 1, :, degree - t]
+    return X[:, j] * h
 
 
 def interactions(X: FloatArray, V: dict[int, FloatArray]) -> FloatArray:

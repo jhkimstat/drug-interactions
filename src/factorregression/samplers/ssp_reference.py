@@ -5,10 +5,10 @@ from scipy.stats import invgamma
 from ..conditionals import indicator_log_odds, variance_parameters
 from ..distributions import positive_finite
 from ..model import (
+    advance_symmetric_prefix,
     elementary_symmetric,
-    elementary_symmetric_coefficients,
     loading_slope,
-    update_symmetric_coefficients,
+    suffix_symmetric_coefficients,
 )
 from .common import update_common, update_loading
 
@@ -37,10 +37,14 @@ def update_gamma(data, spec, state, rng):
                 state.gamma[d][:, k] = rng.random(spec.p) < state.pi_gamma[d]
                 continue
             v = state.gamma[d][:, k] * state.tilde_v[d][:, k]
-            polynomial = elementary_symmetric_coefficients(data.X * v, d - 1)
+            suffix = suffix_symmetric_coefficients(data.X * v, d - 1)
+            prefix = np.zeros((len(data.y), d))
+            prefix[:, 0] = 1.0
             for j in range(spec.p):
                 state.context = f"gamma[{d},{j},{k}]"
-                h = state.tilde_v[d][j, k] * loading_slope(data.X, v, d, j, polynomial)
+                h = state.tilde_v[d][j, k] * loading_slope(
+                    data.X, v, d, j, prefix=prefix, suffix=suffix
+                )
                 old = int(state.gamma[d][j, k])
                 g = state.eta - old * h
                 odds = indicator_log_odds(h, g, state.omega, data.kappa, state.pi_gamma[d])
@@ -49,12 +53,9 @@ def update_gamma(data, spec, state, rng):
                 new = rng.random() < expit(odds)
                 state.gamma[d][j, k] = new
                 if new != old:
-                    delta_v = (int(new) - old) * state.tilde_v[d][j, k]
                     state.eta += (int(new) - old) * h
-                    update_symmetric_coefficients(
-                        polynomial, data.X[:, j] * v[j], data.X[:, j] * delta_v
-                    )
-                    v[j] += delta_v
+                v[j] = int(new) * state.tilde_v[d][j, k]
+                advance_symmetric_prefix(prefix, data.X[:, j] * v[j], j)
 
 
 def update_slabs(data, spec, state, rng):
@@ -65,11 +66,13 @@ def update_slabs(data, spec, state, rng):
                 state.tilde_v[d][:, k] = rng.normal(0, np.sqrt(state.sigma_v2[d]), spec.p)
                 continue
             v = state.gamma[d][:, k] * state.tilde_v[d][:, k]
-            polynomial = elementary_symmetric_coefficients(data.X * v, d - 1)
+            suffix = suffix_symmetric_coefficients(data.X * v, d - 1)
+            prefix = np.zeros((len(data.y), d))
+            prefix[:, 0] = 1.0
             for j in range(spec.p):
                 state.context = f"tilde_v[{d},{j},{k}]"
                 if state.z[d][k] and state.gamma[d][j, k]:
-                    h = loading_slope(data.X, v, d, j, polynomial)
+                    h = loading_slope(data.X, v, d, j, prefix=prefix, suffix=suffix)
                     update_loading(
                         data,
                         state,
@@ -78,11 +81,11 @@ def update_slabs(data, spec, state, rng):
                         h,
                         state.sigma_v2[d],
                         rng,
-                        polynomial,
                     )
                     v[j] = state.tilde_v[d][j, k]
                 else:
                     state.tilde_v[d][j, k] = rng.normal(0, np.sqrt(state.sigma_v2[d]))
+                advance_symmetric_prefix(prefix, data.X[:, j] * v[j], j)
 
 
 def update_hyperparameters(spec, state, rng):
